@@ -61,8 +61,17 @@ impl ArenaHeader {
 		if data.len() < ARENA_HEADER_SIZE {
 			return None;
 		}
-		// SAFETY: data.len() >= ARENA_HEADER_SIZE checked above.
-		let header = unsafe { std::ptr::read_unaligned(data.as_ptr() as *const ArenaHeader) };
+		let b: &[u8; ARENA_HEADER_SIZE] = data[..ARENA_HEADER_SIZE].try_into().ok()?;
+		let header = Self {
+			magic: u32::from_le_bytes(b[0..4].try_into().unwrap()),
+			version: u16::from_le_bytes(b[4..6].try_into().unwrap()),
+			flags: u16::from_le_bytes(b[6..8].try_into().unwrap()),
+			data_area_len: u32::from_le_bytes(b[8..12].try_into().unwrap()),
+			head_offset: u32::from_le_bytes(b[12..16].try_into().unwrap()),
+			tail_offset: u32::from_le_bytes(b[16..20].try_into().unwrap()),
+			live_slot_count: u32::from_le_bytes(b[20..24].try_into().unwrap()),
+			total_frames: u64::from_le_bytes(b[24..32].try_into().unwrap()),
+		};
 		if !header.is_valid() {
 			return None;
 		}

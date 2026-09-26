@@ -5,7 +5,8 @@ edition = "2021"
 
 [features]
 default = ["std"]
-std = []
+std = ["alloc"]
+alloc = []
 
 [dependencies]
 

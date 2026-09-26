@@ -1,3 +1,5 @@
+extern crate alloc;
+
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 #[derive(Clone, Copy)]
@@ -11,6 +13,11 @@ struct DocState {
 	_pad: [u8; 3],
 	line_hashes: [u64; 16],
 }
+
+const DOC_STATE_SIZE: usize = core::mem::size_of::<DocState>();
+const DOC_MAX_ENCODED: usize = 10 * ((DOC_STATE_SIZE + 7) / 8) + 1;
+
+type DocBuf = phoros::BPRB<DocState, alloc::boxed::Box<[u8]>, DOC_STATE_SIZE, DOC_MAX_ENCODED>;
 
 fn make_doc_state(id: usize) -> DocState {
 	DocState {
@@ -32,12 +39,10 @@ fn bench_rollback(c: &mut Criterion) {
 	for depth in [1, 5, 10, 30, 60] {
 		group.bench_with_input(BenchmarkId::new("undo_depth", depth), &depth, |b, &depth| {
 			b.iter(|| {
-				let mut buf = phoros::BPRB::<DocState>::with_defaults(128 * 1024).unwrap();
-				// Simulate typing: each keystroke records a snapshot
+				let mut buf = DocBuf::with_defaults_boxed(128 * 1024).unwrap();
 				for i in 0..depth + 10 {
 					buf.snapshot(&make_doc_state(i)).unwrap();
 				}
-				// Undo back to the beginning
 				buf.rollback_to(0).unwrap();
 			});
 		});
@@ -49,10 +54,9 @@ fn bench_rollback(c: &mut Criterion) {
 fn bench_snapshot(c: &mut Criterion) {
 	let mut group = c.benchmark_group("snapshot_keystroke");
 
-	// Simulate rapid typing: state barely changes between frames
 	group.bench_function("typing_same_line", |b| {
 		b.iter(|| {
-			let mut buf = phoros::BPRB::<DocState>::with_defaults(128 * 1024).unwrap();
+			let mut buf = DocBuf::with_defaults_boxed(128 * 1024).unwrap();
 			let base = make_doc_state(0);
 			for i in 0..1000 {
 				let mut state = base;
@@ -62,10 +66,9 @@ fn bench_snapshot(c: &mut Criterion) {
 		});
 	});
 
-	// Simulate edits across multiple lines: state changes more
 	group.bench_function("editing_across_lines", |b| {
 		b.iter(|| {
-			let mut buf = phoros::BPRB::<DocState>::with_defaults(128 * 1024).unwrap();
+			let mut buf = DocBuf::with_defaults_boxed(128 * 1024).unwrap();
 			for i in 0..1000 {
 				buf.snapshot(&make_doc_state(i)).unwrap();
 			}

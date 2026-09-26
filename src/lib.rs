@@ -1,22 +1,28 @@
+#![cfg_attr(not(feature = "std"), no_std)]
+
+extern crate alloc;
+
 pub mod arena;
 pub mod buffer;
 pub mod codec;
 pub mod error;
 pub mod index;
 pub mod slot;
+pub mod storage;
 
 pub use buffer::BPRB;
 pub use error::{BufferError, CodecError, RollbackError};
 pub use index::AnchorIndex;
 pub use slot::SlotType;
+pub use storage::ArenaStorage;
 
 const _: () = assert!(
-	std::mem::size_of::<arena::ArenaHeader>() == 32,
+	core::mem::size_of::<arena::ArenaHeader>() == 32,
 	"ArenaHeader must be exactly 32 bytes"
 );
 
 const _: () = assert!(
-	std::mem::size_of::<slot::SlotHeader>() == 16,
+	core::mem::size_of::<slot::SlotHeader>() == 16,
 	"SlotHeader must be exactly 16 bytes"
 );
 
@@ -26,17 +32,17 @@ mod tests {
 
 	#[test]
 	fn arena_header_size() {
-		assert_eq!(std::mem::size_of::<arena::ArenaHeader>(), 32);
+		assert_eq!(core::mem::size_of::<arena::ArenaHeader>(), 32);
 	}
 
 	#[test]
 	fn slot_header_size() {
-		assert_eq!(std::mem::size_of::<slot::SlotHeader>(), 16);
+		assert_eq!(core::mem::size_of::<slot::SlotHeader>(), 16);
 	}
 
 	#[test]
 	fn anchor_entry_size() {
-		assert_eq!(std::mem::size_of::<index::AnchorEntry>(), 16);
+		assert_eq!(core::mem::size_of::<index::AnchorEntry>(), 16);
 	}
 
 	#[test]

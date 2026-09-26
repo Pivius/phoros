@@ -1,3 +1,5 @@
+extern crate alloc;
+
 use criterion::{criterion_group, criterion_main, Criterion};
 
 #[derive(Clone, Copy)]
@@ -11,6 +13,11 @@ struct DocState {
 	_pad: [u8; 3],
 	line_hashes: [u64; 16],
 }
+
+const DOC_STATE_SIZE: usize = core::mem::size_of::<DocState>();
+const DOC_MAX_ENCODED: usize = 10 * ((DOC_STATE_SIZE + 7) / 8) + 1;
+
+type DocBuf = phoros::BPRB<DocState, alloc::boxed::Box<[u8]>, DOC_STATE_SIZE, DOC_MAX_ENCODED>;
 
 fn make_doc_state(id: usize) -> DocState {
 	DocState {
@@ -29,10 +36,9 @@ fn make_doc_state(id: usize) -> DocState {
 fn bench_snapshot(c: &mut Criterion) {
 	let mut group = c.benchmark_group("snapshot");
 
-	// Rapid typing: cursor moves, hashes barely change
 	group.bench_function("typing_same_line", |b| {
 		b.iter(|| {
-			let mut buf = phoros::BPRB::<DocState>::with_defaults(128 * 1024).unwrap();
+			let mut buf = DocBuf::with_defaults_boxed(128 * 1024).unwrap();
 			let base = make_doc_state(0);
 			for i in 0..1000 {
 				let mut state = base;
@@ -42,24 +48,21 @@ fn bench_snapshot(c: &mut Criterion) {
 		});
 	});
 
-	// Editing across lines: more fields change per edit
 	group.bench_function("editing_across_lines", |b| {
 		b.iter(|| {
-			let mut buf = phoros::BPRB::<DocState>::with_defaults(128 * 1024).unwrap();
+			let mut buf = DocBuf::with_defaults_boxed(128 * 1024).unwrap();
 			for i in 0..1000 {
 				buf.snapshot(&make_doc_state(i)).unwrap();
 			}
 		});
 	});
 
-	// Undo/redo cycle: snapshot then rollback repeatedly
 	group.bench_function("undo_redo_cycle", |b| {
 		b.iter(|| {
-			let mut buf = phoros::BPRB::<DocState>::with_defaults(128 * 1024).unwrap();
+			let mut buf = DocBuf::with_defaults_boxed(128 * 1024).unwrap();
 			for i in 0..60 {
 				buf.snapshot(&make_doc_state(i)).unwrap();
 			}
-			// Undo to start, then redo back
 			buf.rollback_to(0).unwrap();
 			buf.rollback_to(59).unwrap();
 		});

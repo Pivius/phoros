@@ -120,7 +120,7 @@ pub fn byte_masked_encode(delta: &[u8], output: &mut [u8]) -> CodecResult<usize>
 
 	for i in 0..k {
 		let word_start = i * 8;
-		let word_end = std::cmp::min(word_start + 8, delta.len());
+		let word_end = core::cmp::min(word_start + 8, delta.len());
 
 		let mut word = [0u8; 8];
 		word[..word_end - word_start].copy_from_slice(&delta[word_start..word_end]);
@@ -192,7 +192,7 @@ pub fn byte_masked_decode(encoded: &[u8], output: &mut [u8]) -> CodecResult<()> 
 
 	for i in 0..k {
 		let word_start = i * 8;
-		let word_end = std::cmp::min(word_start + 8, output.len());
+		let word_end = core::cmp::min(word_start + 8, output.len());
 
 		let flag = reader.read_bit()?;
 
