@@ -111,7 +111,7 @@ impl<'a> BitReader<'a> {
 /// Non-zero words emit a `1` bit, an 8-bit byte mask, and only the
 /// changed bytes. Returns the number of bytes written to `output`.
 pub fn byte_masked_encode(delta: &[u8], output: &mut [u8]) -> usize {
-	let k = (delta.len() + 7) / 8;
+	let k = delta.len().div_ceil(8);
 	let mut writer = BitWriter::new(output);
 
 	for i in 0..k {
@@ -129,16 +129,16 @@ pub fn byte_masked_encode(delta: &[u8], output: &mut [u8]) -> usize {
 			writer.write_bit(true);
 
 			let mut mask = 0u8;
-			for j in 0..8 {
-				if word[j] != 0 {
+			for (j, &b) in word.iter().enumerate() {
+				if b != 0 {
 					mask |= 1 << j;
 				}
 			}
 			writer.write_u8(mask);
 
-			for j in 0..8 {
+			for (j, &b) in word.iter().enumerate() {
 				if mask & (1 << j) != 0 {
-					writer.write_u8(word[j]);
+					writer.write_u8(b);
 				}
 			}
 		}
@@ -147,11 +147,41 @@ pub fn byte_masked_encode(delta: &[u8], output: &mut [u8]) -> usize {
 	writer.finish()
 }
 
+/// CRC16-CCITT (polynomial 0x1021, init 0xFFFF).
+pub fn crc16(data: &[u8]) -> u16 {
+	let mut crc: u16 = 0xFFFF;
+	for &byte in data {
+		crc ^= (byte as u16) << 8;
+		for _ in 0..8 {
+			if crc & 0x8000 != 0 {
+				crc = (crc << 1) ^ 0x1021;
+			} else {
+				crc <<= 1;
+			}
+		}
+	}
+	crc
+}
+
+pub fn crc16_update(mut crc: u16, data: &[u8]) -> u16 {
+	for &byte in data {
+		crc ^= (byte as u16) << 8;
+		for _ in 0..8 {
+			if crc & 0x8000 != 0 {
+				crc = (crc << 1) ^ 0x1021;
+			} else {
+				crc <<= 1;
+			}
+		}
+	}
+	crc
+}
+
 /// Decode a byte-masked sparse XOR delta into `output`.
 ///
 /// `output` must be pre-zeroed or contain the base state to XOR into.
-pub fn byte_masked_decode(encoded: &[u8], output: &mut [u8]) -> Result<(), ()> {
-	let k = (output.len() + 7) / 8;
+pub fn byte_masked_decode(encoded: &[u8], output: &mut [u8]) {
+	let k = output.len().div_ceil(8);
 	let mut reader = BitReader::new(encoded);
 
 	for i in 0..k {
@@ -168,9 +198,9 @@ pub fn byte_masked_decode(encoded: &[u8], output: &mut [u8]) -> Result<(), ()> {
 			let mask = reader.read_u8();
 
 			let mut word = [0u8; 8];
-			for j in 0..8 {
+			for (j, slot) in word.iter_mut().enumerate() {
 				if mask & (1 << j) != 0 {
-					word[j] = reader.read_u8();
+					*slot = reader.read_u8();
 				}
 			}
 
@@ -178,6 +208,4 @@ pub fn byte_masked_decode(encoded: &[u8], output: &mut [u8]) -> Result<(), ()> {
 			output[word_start..word_end].copy_from_slice(&word[..copy_len]);
 		}
 	}
-
-	Ok(())
 }

@@ -33,7 +33,7 @@ impl AnchorIndex {
 
 		let pos = self.entries[..self.count]
 			.iter()
-			.position(|e| e.map_or(false, |e| e.frame > frame))
+			.position(|e| e.is_some_and(|e| e.frame > frame))
 			.unwrap_or(self.count);
 
 		for i in (pos..self.count).rev() {
@@ -49,7 +49,7 @@ impl AnchorIndex {
 	pub fn remove_by_offset(&mut self, offset: u32) -> bool {
 		let pos = self.entries[..self.count]
 			.iter()
-			.position(|e| e.map_or(false, |e| e.offset == offset));
+			.position(|e| e.is_some_and(|e| e.offset == offset));
 
 		if let Some(pos) = pos {
 			for i in pos..self.count - 1 {
@@ -94,7 +94,7 @@ impl AnchorIndex {
 	pub fn evict_before(&mut self, min_frame: u64) {
 		let new_count = self.entries[..self.count]
 			.iter()
-			.filter(|e| e.map_or(false, |e| e.frame >= min_frame))
+			.filter(|e| e.is_some_and(|e| e.frame >= min_frame))
 			.count();
 
 		let mut write = 0;

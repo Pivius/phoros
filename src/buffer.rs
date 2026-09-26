@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 use std::vec;
 
 use crate::{
-	arena::{ArenaHeader, ARENA_HEADER_SIZE, available_space},
+	arena::ArenaHeader,
 	slot::{SlotHeader, SlotType, SLOT_HEADER_SIZE, next_slot_offset},
 	codec, index::AnchorIndex,
 	error::{BufferError, RollbackError}
@@ -11,19 +11,69 @@ use crate::{
 pub const DEFAULT_ANCHOR_INTERVAL: u64 = 60;
 pub const DEFAULT_DELTA_THRESHOLD: f64 = 0.70;
 
+// Free functions for arena I/O and CRC
+
+fn arena_read_into(arena: &[u8], off: u32, buf: &mut [u8]) {
+	let data_len = arena.len();
+	if data_len == 0 || buf.is_empty() {
+		return;
+	}
+	let start = (off as usize) % data_len;
+	let first = std::cmp::min(buf.len(), data_len - start);
+	let rest = buf.len() - first;
+	buf[..first].copy_from_slice(&arena[start..start + first]);
+	if rest > 0 {
+		buf[first..].copy_from_slice(&arena[..rest]);
+	}
+}
+
+fn arena_write_to(arena: &mut [u8], off: u32, bytes: &[u8]) {
+	let data_len = arena.len();
+	if data_len == 0 || bytes.is_empty() {
+		return;
+	}
+	let start = (off as usize) % data_len;
+	let first = std::cmp::min(bytes.len(), data_len - start);
+	arena[start..start + first].copy_from_slice(&bytes[..first]);
+	if bytes.len() > first {
+		arena[..bytes.len() - first].copy_from_slice(&bytes[first..]);
+	}
+}
+
+fn compute_checksum(frame: u64, kind: u8, payload: &[u8]) -> u16 {
+	let mut crc = 0xFFFF;
+	crc = codec::crc16_update(crc, &frame.to_le_bytes());
+	crc = codec::crc16_update(crc, &[kind]);
+	crc = codec::crc16_update(crc, &(payload.len() as u16).to_le_bytes());
+	crc = codec::crc16_update(crc, payload);
+	crc
+}
+
+/// Read a 16-byte slot header from the arena
+fn read_header_at(arena: &[u8], off: u32) -> Option<SlotHeader> {
+	let mut buf = [0u8; SLOT_HEADER_SIZE];
+	arena_read_into(arena, off, &mut buf);
+	SlotHeader::from_bytes(&buf)
+}
+
 /// Zero-allocation circular state history.
 ///
 /// Allocates a single contiguous byte arena on creation and never allocates again.\
 /// `T` must be `Copy + Sized + Send + 'static` with no drop logic.
 pub struct BPRB<T> {
-	arena: Vec<u8>,
-	arena_ptr: *mut ArenaHeader,
+	arena: Box<[u8]>,
+	header: ArenaHeader,
+	used_bytes: u32,
 	current_head_state: Option<T>,
 	anchor_index: AnchorIndex,
 	frame_counter: u64,
+	diverged: bool,
 	state_size: usize,
 	anchor_interval: u64,
 	delta_threshold: f64,
+	// Scratch Buffers
+	buf_delta: Box<[u8]>,
+	buf_encoded: Box<[u8]>,
 	_marker: PhantomData<T>,
 }
 
@@ -41,34 +91,30 @@ impl<T: Copy + Sized + Send + 'static> BPRB<T> {
 
 		let state_size = std::mem::size_of::<T>();
 		let min_slot_size = SLOT_HEADER_SIZE + state_size;
+
 		if arena_bytes < min_slot_size {
 			return Err(BufferError::ArenaFull);
 		}
 
-		let total_size = ARENA_HEADER_SIZE + arena_bytes;
-		let mut arena = vec![0u8; total_size];
+		// Scratch buffer sizing.
+		let max_encoded = 10 * state_size.div_ceil(8) + 1;
 
+		let arena = vec![0u8; arena_bytes].into_boxed_slice();
 		let header = ArenaHeader::new(arena_bytes as u32);
-		// SAFETY: arena total_size >= ARENA_HEADER_SIZE + arena_bytes.
-		unsafe {
-			std::ptr::copy_nonoverlapping(
-				&header as *const ArenaHeader as *const u8,
-				arena.as_mut_ptr(),
-				ARENA_HEADER_SIZE,
-			);
-		}
-
-		let arena_ptr = arena.as_mut_ptr() as *mut ArenaHeader;
 
 		Ok(Self {
 			arena,
-			arena_ptr,
+			header,
+			used_bytes: 0,
 			current_head_state: None,
 			anchor_index: AnchorIndex::new(),
 			frame_counter: 0,
+			diverged: false,
 			state_size,
 			anchor_interval,
 			delta_threshold: DEFAULT_DELTA_THRESHOLD,
+			buf_delta: vec![0u8; state_size].into_boxed_slice(),
+			buf_encoded: vec![0u8; max_encoded].into_boxed_slice(),
 			_marker: PhantomData,
 		})
 	}
@@ -89,48 +135,77 @@ impl<T: Copy + Sized + Send + 'static> BPRB<T> {
 		Ok(())
 	}
 
-	/// Record `state` as a new frame. Stores a full snapshot on the first
-	/// frame, every `anchor_interval` frames, or when the compressed delta
-	/// exceeds the threshold. Otherwise stores a compressed XOR delta.
 	pub fn snapshot(&mut self, state: &T) -> Result<(), BufferError> {
 		let frame = self.frame_counter;
 		let state_bytes = Self::state_as_bytes(state);
 
-		let (kind, payload_buf);
+		let mut kind;
+		let mut payload_len;
 
 		if self.should_store_snapshot(state_bytes, frame) {
 			kind = SlotType::FullSnapshot;
-			payload_buf = Vec::from(state_bytes);
+			payload_len = self.state_size;
 		} else {
+			// XOR delta into buf_delta.
 			let current = Self::state_as_bytes(
 				self.current_head_state
 					.as_ref()
 					.expect("current_head_state must be set after first snapshot"),
 			);
-			let mut delta = vec![0u8; self.state_size];
-			for i in 0..self.state_size {
-				delta[i] = state_bytes[i] ^ current[i];
+			for (d, (s, c)) in self.buf_delta.iter_mut().zip(state_bytes.iter().zip(current.iter())) {
+				*d = *s ^ *c;
 			}
 
-			let max_encoded = 9 * ((self.state_size + 7) / 8);
-			let mut encoded = vec![0u8; max_encoded];
-			let encoded_len = codec::byte_masked_encode(&delta, &mut encoded);
+			let encoded_len = codec::byte_masked_encode(&self.buf_delta, &mut self.buf_encoded);
 
 			if encoded_len > ((self.state_size as f64 * self.delta_threshold) as usize) {
 				kind = SlotType::FullSnapshot;
-				payload_buf = Vec::from(state_bytes);
+				payload_len = self.state_size;
 			} else {
 				kind = SlotType::Delta;
-				encoded.truncate(encoded_len);
-				payload_buf = encoded;
+				payload_len = encoded_len;
 			}
 		};
 
-		self.write_slot(frame, kind, &payload_buf)?;
+		// Reserve
+		self.ensure_space((SLOT_HEADER_SIZE + payload_len) as u32);
+
+		if kind == SlotType::Delta && self.anchor_index.is_empty() {
+			kind = SlotType::FullSnapshot;
+			payload_len = self.state_size;
+			self.ensure_space((SLOT_HEADER_SIZE + self.state_size) as u32);
+		}
+
+		let payload_ref: &[u8] = if kind == SlotType::Delta {
+			&self.buf_encoded[..payload_len]
+		} else {
+			state_bytes
+		};
+
+		let checksum = compute_checksum(frame, kind as u8, payload_ref);
+		let slot_header = SlotHeader {
+			frame,
+			kind: kind as u8,
+			payload_len: payload_len as u16,
+			checksum,
+			reserved: 0,
+		};
+		let header_bytes = slot_header.to_bytes();
+
+		// Write header + payload to arena
+		let start_off = self.header.tail_offset;
+		arena_write_to(&mut self.arena, start_off, &header_bytes);
+		arena_write_to(&mut self.arena, start_off + SLOT_HEADER_SIZE as u32, payload_ref);
+
+		let slot_size = SLOT_HEADER_SIZE as u32 + payload_len as u32;
+		self.header.tail_offset = start_off.wrapping_add(slot_size) % self.header.data_area_len;
+		self.header.live_slot_count += 1;
+		self.header.total_frames += 1;
+		self.used_bytes += slot_size;
 
 		if kind == SlotType::FullSnapshot {
-			let slot_offset = self.compute_slot_write_offset();
-			self.anchor_index.insert(frame, slot_offset);
+			self.anchor_index.insert(frame, start_off);
+			self.diverged = false;
 		}
 
 		self.current_head_state = Some(*state);
@@ -142,51 +217,83 @@ impl<T: Copy + Sized + Send + 'static> BPRB<T> {
 	/// Reconstruct the state at `target_frame` by finding the nearest anchor
 	/// and walking the delta chain forward. Updates the internal head state.
 	pub fn rollback_to(&mut self, target_frame: u64) -> Result<T, RollbackError> {
+		if target_frame > self.frame_counter.saturating_sub(1) {
+			return Err(RollbackError::FrameEvicted);
+		}
+
 		let anchor = self
 			.anchor_index
 			.find_nearest_le(target_frame)
 			.ok_or(RollbackError::FrameEvicted)?;
 
-		let state_bytes = self.read_payload_at(anchor.offset)?;
-		let mut working = Self::bytes_to_state(state_bytes);
+		let anchor_header = self.read_slot_at(anchor.offset)?;
+		let mut working = Self::bytes_to_state(
+			&self.buf_encoded[..anchor_header.payload_len as usize],
+		);
 
-		let mut offset = {
-			let header = self.read_slot_header_at(anchor.offset)?;
-			next_slot_offset(anchor.offset, header.payload_len, self.data_area_len())
-		};
+		let mut offset = next_slot_offset(
+			anchor.offset,
+			anchor_header.payload_len,
+			self.header.data_area_len,
+		);
 
 		for expected_frame in (anchor.frame + 1)..=target_frame {
-			let header = self.read_slot_header_at(offset)?;
+			let header = self.read_slot_at(offset)?;
 
 			if header.frame != expected_frame {
 				return Err(RollbackError::CorruptedChain);
 			}
 
-			let payload = self.read_payload_at(offset)?;
-
 			match SlotType::from_u8(header.kind) {
 				Some(SlotType::FullSnapshot) => {
-					working = Self::bytes_to_state(payload);
+					working = Self::bytes_to_state(
+						&self.buf_encoded[..header.payload_len as usize],
+					);
 				}
 				Some(SlotType::Delta) => {
-					let mut delta = vec![0u8; self.state_size];
-					codec::byte_masked_decode(payload, &mut delta)
-						.map_err(|_| RollbackError::CorruptedChain)?;
+					self.buf_delta.fill(0);
+					codec::byte_masked_decode(
+						&self.buf_encoded[..header.payload_len as usize],
+						&mut self.buf_delta,
+					);
 
 					let working_bytes = Self::state_as_bytes_mut(&mut working);
-					for i in 0..self.state_size {
-						working_bytes[i] ^= delta[i];
+					for (w, d) in working_bytes.iter_mut().zip(self.buf_delta.iter()) {
+						*w ^= *d;
 					}
 				}
 				None => return Err(RollbackError::CorruptedChain),
 			}
 
-			offset = next_slot_offset(offset, header.payload_len, self.data_area_len());
+			offset = next_slot_offset(offset, header.payload_len, self.header.data_area_len);
 		}
 
 		self.current_head_state = Some(working);
+		if target_frame != self.frame_counter.saturating_sub(1) {
+			self.diverged = true;
+		}
 
 		Ok(working)
+	}
+
+	/// Reconstruct the state at `frame_idx`, XOR `delta` into it, update the
+	/// internal head state, and return the result.
+	pub fn apply_delta(&mut self, frame_idx: u64, delta: &[u8]) -> Result<T, RollbackError> {
+		if delta.len() != self.state_size {
+			return Err(RollbackError::CorruptedChain);
+		}
+
+		let mut state = self.rollback_to(frame_idx)?;
+
+		let state_bytes = Self::state_as_bytes_mut(&mut state);
+		for (s, d) in state_bytes.iter_mut().zip(delta.iter()) {
+			*s ^= *d;
+		}
+
+		self.current_head_state = Some(state);
+		self.diverged = true;
+
+		Ok(state)
 	}
 
 	pub fn current_frame(&self) -> u64 {
@@ -194,16 +301,10 @@ impl<T: Copy + Sized + Send + 'static> BPRB<T> {
 	}
 
 	pub fn oldest_frame(&self) -> Option<u64> {
-		if self.frame_counter == 0 {
+		if self.frame_counter == 0 || self.header.live_slot_count == 0 {
 			return None;
 		}
-		let header = self.arena_header();
-		if header.live_slot_count == 0 {
-			return None;
-		}
-		self.read_slot_header_at(header.head_offset)
-			.ok()
-			.map(|h| h.frame)
+		read_header_at(&self.arena, self.header.head_offset).map(|h| h.frame)
 	}
 
 	pub fn newest_frame(&self) -> Option<u64> {
@@ -214,7 +315,7 @@ impl<T: Copy + Sized + Send + 'static> BPRB<T> {
 	}
 
 	pub fn len(&self) -> usize {
-		self.arena_header().live_slot_count as usize
+		self.header.live_slot_count as usize
 	}
 
 	pub fn is_empty(&self) -> bool {
@@ -227,137 +328,98 @@ impl<T: Copy + Sized + Send + 'static> BPRB<T> {
 
 	// Private
 
-	fn arena_header(&self) -> &ArenaHeader {
-		// SAFETY: arena_ptr is valid, aligned, and initialized in `new()`.
-		// The arena lives for the lifetime of `self`.
-		unsafe { &*self.arena_ptr }
+	fn free_space(&self) -> u32 {
+		self.header.data_area_len.saturating_sub(self.used_bytes)
 	}
 
-	fn arena_header_mut(&mut self) -> &mut ArenaHeader {
-		// SAFETY: same as arena_header, mutable.
-		unsafe { &mut *self.arena_ptr }
+	fn ensure_space(&mut self, need: u32) {
+		while self.free_space() < need && self.header.live_slot_count > 0 {
+			self.evict_oldest_segment();
+		}
 	}
 
-	fn data_area_len(&self) -> u32 {
-		self.arena_header().data_area_len
-	}
+	/// Read a slot's header and payload at `offset` into `buf_encoded`,
+	/// verifying the CRC16. Returns the parsed header.
+	fn read_slot_at(&mut self, offset: u32) -> Result<SlotHeader, RollbackError> {
+		let header = read_header_at(&self.arena, offset)
+			.ok_or(RollbackError::ArenaCorrupted)?;
 
-	fn compute_slot_write_offset(&self) -> u32 {
-		self.arena_header().tail_offset
-	}
+		let payload_len = header.payload_len as usize;
+		arena_read_into(
+			&self.arena,
+			offset + SLOT_HEADER_SIZE as u32,
+			&mut self.buf_encoded[..payload_len],
+		);
 
-	fn read_slot_header_at(&self, offset: u32) -> Result<SlotHeader, RollbackError> {
-		let start = ARENA_HEADER_SIZE + offset as usize;
-		let end = start + SLOT_HEADER_SIZE;
-
-		if end > self.arena.len() {
-			return Err(RollbackError::ArenaCorrupted);
+		// CRC verify
+		let checksum = compute_checksum(
+			header.frame,
+			header.kind,
+			&self.buf_encoded[..payload_len],
+		);
+		if checksum != header.checksum {
+			return Err(RollbackError::CorruptedChain);
 		}
 
-		SlotHeader::from_bytes(&self.arena[start..end])
-			.ok_or(RollbackError::ArenaCorrupted)
-	}
-
-	fn read_payload_at(&self, slot_offset: u32) -> Result<&[u8], RollbackError> {
-		let header = self.read_slot_header_at(slot_offset)?;
-		let payload_start = (ARENA_HEADER_SIZE + slot_offset as usize) + SLOT_HEADER_SIZE;
-		let payload_end = payload_start + header.payload_len as usize;
-
-		if payload_end > self.arena.len() {
-			return Err(RollbackError::ArenaCorrupted);
-		}
-
-		Ok(&self.arena[payload_start..payload_end])
+		Ok(header)
 	}
 
 	fn should_store_snapshot(&self, _state_bytes: &[u8], frame: u64) -> bool {
 		if self.current_head_state.is_none() {
 			return true;
 		}
-		if frame % self.anchor_interval == 0 {
+		if self.anchor_index.is_empty() {
+			return true;
+		}
+		if self.diverged {
+			return true;
+		}
+		if frame.is_multiple_of(self.anchor_interval) {
 			return true;
 		}
 		false
 	}
 
-	/// Write a slot at `tail_offset`, evicting from `head_offset` if needed.\
-	/// Handles arena wraparound when the slot straddles the boundary.
-	fn write_slot(&mut self, frame: u64, kind: SlotType, payload: &[u8]) -> Result<(), BufferError> {
-		let header = self.arena_header();
-		let data_area_len = header.data_area_len;
-		let tail = header.tail_offset;
-		let head = header.head_offset;
-
-		let slot_size = SLOT_HEADER_SIZE as u32 + payload.len() as u32;
-
-		let mut avail = available_space(head, tail, data_area_len);
-		while avail < slot_size && self.arena_header().live_slot_count > 0 {
-			self.evict_oldest_slot();
-			let h = self.arena_header();
-			avail = available_space(h.head_offset, h.tail_offset, h.data_area_len);
+	/// Evict the oldest segment: the head slot plus any trailing deltas, stopping
+	/// just before the next full-snapshot anchor.
+	fn evict_oldest_segment(&mut self) {
+		if self.header.live_slot_count == 0 {
+			return;
 		}
+		let data_len = self.header.data_area_len;
+		let tail = self.header.tail_offset;
+		let mut off = self.header.head_offset;
 
-		if avail < slot_size {
-			return Err(BufferError::ArenaFull);
-		}
+		let mut count = 0u32;
+		let mut freed = 0u32;
 
-		let slot_header = SlotHeader {
-			frame,
-			kind: kind as u8,
-			payload_len: payload.len() as u16,
-			checksum: 0, // TODO: CRC16
-			reserved: 0,
-		};
-
-		let write_offset = tail;
-		let start = ARENA_HEADER_SIZE + write_offset as usize;
-		let remaining_at_tail = data_area_len - tail;
-
-		if slot_size <= remaining_at_tail {
-			// SAFETY: bounds checked by avail >= slot_size.
-			unsafe {
-				slot_header.write_to(&mut self.arena[start..start + SLOT_HEADER_SIZE]);
+		while let Some(header) = read_header_at(&self.arena, off) {
+			if count > 0 && header.kind == SlotType::FullSnapshot as u8 {
+				break;
 			}
-			let payload_start = start + SLOT_HEADER_SIZE;
-			self.arena[payload_start..payload_start + payload.len()].copy_from_slice(payload);
+			freed += SLOT_HEADER_SIZE as u32 + header.payload_len as u32;
+			count += 1;
 
-			self.arena_header_mut().tail_offset = (write_offset + slot_size) % data_area_len;
+			off = next_slot_offset(off, header.payload_len, data_len);
+			if off == tail {
+				break;
+			}
+		}
+
+		if count == 0 {
+			return;
+		}
+
+		self.header.head_offset = off;
+		self.header.live_slot_count -= count;
+		self.used_bytes -= freed;
+
+		let boundary = if self.header.live_slot_count == 0 {
+			u64::MAX
 		} else {
-			// Straddles boundary - header at tail, payload wraps.
-			unsafe {
-				slot_header.write_to(&mut self.arena[start..]);
-			}
-			let part1_len = remaining_at_tail - SLOT_HEADER_SIZE as u32;
-			let payload_start = start + SLOT_HEADER_SIZE;
-			self.arena[payload_start..].copy_from_slice(&payload[..part1_len as usize]);
-
-			let part2_len = payload.len() - part1_len as usize;
-			let data_area_start = ARENA_HEADER_SIZE;
-			self.arena[data_area_start..data_area_start + part2_len]
-				.copy_from_slice(&payload[part1_len as usize..]);
-
-			self.arena_header_mut().tail_offset = part2_len as u32;
-		}
-
-		self.arena_header_mut().live_slot_count += 1;
-
-		Ok(())
-	}
-
-	fn evict_oldest_slot(&mut self) {
-		let head = self.arena_header().head_offset;
-		let header = match self.read_slot_header_at(head) {
-			Ok(h) => h,
-			Err(_) => return,
+			read_header_at(&self.arena, off).map(|h| h.frame).unwrap_or(u64::MAX)
 		};
-
-		if header.kind == SlotType::FullSnapshot as u8 {
-			self.anchor_index.remove_by_offset(head);
-		}
-
-		let new_head = next_slot_offset(head, header.payload_len, self.data_area_len());
-		self.arena_header_mut().head_offset = new_head;
-		self.arena_header_mut().live_slot_count -= 1;
+		self.anchor_index.evict_before(boundary);
 	}
 
 	fn state_as_bytes(state: &T) -> &[u8] {
@@ -377,7 +439,46 @@ impl<T: Copy + Sized + Send + 'static> BPRB<T> {
 
 	fn bytes_to_state(bytes: &[u8]) -> T {
 		assert_eq!(bytes.len(), std::mem::size_of::<T>());
-		// SAFETY: bytes.len() == size_of::<T>(), T is flat/Copy/no-drop.
-		unsafe { std::ptr::read(bytes.as_ptr() as *const T) }
+		// SAFETY: T is Copy + no-drop. read_unaligned handles byte-aligned source.
+		unsafe { std::ptr::read_unaligned(bytes.as_ptr() as *const T) }
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+	struct S {
+		x: u64,
+		y: [u8; 40],
+	}
+
+	fn make(i: usize) -> S {
+		let mut y = [0u8; 40];
+		y[0] = i as u8;
+		y[39] = (i * 3) as u8;
+		S { x: i as u64, y }
+	}
+
+	#[test]
+	fn rollback_detects_payload_corruption() {
+		let mut buf = BPRB::<S>::new(64 * 1024, 1).unwrap();
+		buf.snapshot(&make(0)).unwrap();
+
+		buf.arena[SLOT_HEADER_SIZE + 1] ^= 0xFF;
+
+		assert_eq!(buf.rollback_to(0).err(), Some(RollbackError::CorruptedChain));
+	}
+
+	#[test]
+	fn rollback_reads_straddling_slot() {
+		let mut buf = BPRB::<S>::new(100, 1).unwrap();
+		let s0 = make(0);
+		let s1 = make(1);
+		buf.snapshot(&s0).unwrap();
+		buf.snapshot(&s1).unwrap();
+
+		assert_eq!(buf.rollback_to(1).unwrap(), s1);
 	}
 }

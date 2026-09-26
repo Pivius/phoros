@@ -20,7 +20,9 @@ impl SlotType {
 }
 
 /// 16-byte header at the start of each slot in the arena.
-#[repr(C)]
+///
+/// Serialized via [`to_bytes`](SlotHeader::to_bytes)
+/// so the layout is independent of `repr(C)` padding and alignment.
 #[derive(Debug, Clone, Copy)]
 pub struct SlotHeader {
 	pub frame: u64,
@@ -36,24 +38,32 @@ impl SlotHeader {
 		SLOT_HEADER_SIZE + self.payload_len as usize
 	}
 
-	pub fn from_bytes(data: &[u8]) -> Option<Self> {
-		if data.len() < SLOT_HEADER_SIZE {
-			return None;
-		}
-		// SAFETY: data.len() >= SLOT_HEADER_SIZE. repr(C), no padding.
-		let header = unsafe { *(data.as_ptr() as *const SlotHeader) };
-		if SlotType::from_u8(header.kind).is_none() {
-			return None;
-		}
-		Some(header)
+	/// Serialize into 16 little-endian bytes.
+	pub fn to_bytes(&self) -> [u8; SLOT_HEADER_SIZE] {
+		let mut b = [0u8; SLOT_HEADER_SIZE];
+		b[0..8].copy_from_slice(&self.frame.to_le_bytes());
+		b[8] = self.kind;
+		b[9..11].copy_from_slice(&self.payload_len.to_le_bytes());
+		b[11..13].copy_from_slice(&self.checksum.to_le_bytes());
+		b[13] = self.reserved;
+		b
 	}
 
-	/// # Safety
-	///
-	/// `dest` must have at least `SLOT_HEADER_SIZE` bytes available.
-	pub unsafe fn write_to(&self, dest: &mut [u8]) {
-		let src = self as *const Self as *const u8;
-		std::ptr::copy_nonoverlapping(src, dest.as_mut_ptr(), SLOT_HEADER_SIZE);
+	/// Deserialize from at least 16 bytes. Returns `None` on short input or an
+	/// invalid `kind` discriminant.
+	pub fn from_bytes(data: &[u8]) -> Option<Self> {
+		let bytes: &[u8; SLOT_HEADER_SIZE] = data.get(..SLOT_HEADER_SIZE)?.try_into().ok()?;
+
+		let kind = bytes[8];
+		SlotType::from_u8(kind)?;
+
+		Some(Self {
+			frame: u64::from_le_bytes(bytes[0..8].try_into().unwrap()),
+			kind,
+			payload_len: u16::from_le_bytes(bytes[9..11].try_into().unwrap()),
+			checksum: u16::from_le_bytes(bytes[11..13].try_into().unwrap()),
+			reserved: bytes[13],
+		})
 	}
 }
 

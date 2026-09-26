@@ -62,7 +62,7 @@ impl ArenaHeader {
 			return None;
 		}
 		// SAFETY: data.len() >= ARENA_HEADER_SIZE checked above.
-		let header = unsafe { *(data.as_ptr() as *const ArenaHeader) };
+		let header = unsafe { std::ptr::read_unaligned(data.as_ptr() as *const ArenaHeader) };
 		if !header.is_valid() {
 			return None;
 		}
