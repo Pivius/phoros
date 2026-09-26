@@ -6,7 +6,7 @@ pub mod index;
 pub mod slot;
 
 pub use buffer::BPRB;
-pub use error::{BufferError, RollbackError};
+pub use error::{BufferError, CodecError, RollbackError};
 pub use index::AnchorIndex;
 pub use slot::SlotType;
 

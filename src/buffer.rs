@@ -156,7 +156,7 @@ impl<T: Copy + Sized + Send + 'static> BPRB<T> {
 				*d = *s ^ *c;
 			}
 
-			let encoded_len = codec::byte_masked_encode(&self.buf_delta, &mut self.buf_encoded);
+			let encoded_len = codec::byte_masked_encode(&self.buf_delta, &mut self.buf_encoded)?;
 
 			if encoded_len > ((self.state_size as f64 * self.delta_threshold) as usize) {
 				kind = SlotType::FullSnapshot;
@@ -255,7 +255,7 @@ impl<T: Copy + Sized + Send + 'static> BPRB<T> {
 					codec::byte_masked_decode(
 						&self.buf_encoded[..header.payload_len as usize],
 						&mut self.buf_delta,
-					);
+					)?;
 
 					let working_bytes = Self::state_as_bytes_mut(&mut working);
 					for (w, d) in working_bytes.iter_mut().zip(self.buf_delta.iter()) {

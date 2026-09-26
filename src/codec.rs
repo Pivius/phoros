@@ -1,3 +1,7 @@
+use crate::error::CodecError;
+
+type CodecResult<T> = Result<T, CodecError>;
+
 /// Bit-level writer for encoding compressed deltas into a pre-allocated buffer.
 pub struct BitWriter<'a> {
 	buf: &'a mut [u8],
@@ -16,10 +20,10 @@ impl<'a> BitWriter<'a> {
 		}
 	}
 
-	/// # Panics
-	///
-	/// Panics if the buffer is full.
-	pub fn write_bit(&mut self, bit: bool) {
+	pub fn write_bit(&mut self, bit: bool) -> CodecResult<()> {
+		if self.byte_pos >= self.buf.len() {
+			return Err(CodecError::BitstreamOverflow);
+		}
 		if self.bit_pos == 0 {
 			self.buf[self.byte_pos] = 0;
 		}
@@ -31,20 +35,21 @@ impl<'a> BitWriter<'a> {
 			self.bit_pos = 0;
 			self.byte_pos += 1;
 		}
+		Ok(())
 	}
 
 	/// Aligns to byte boundary, then writes.
-	///
-	/// # Panics
-	///
-	/// Panics if the buffer is full.
-	pub fn write_u8(&mut self, val: u8) {
+	pub fn write_u8(&mut self, val: u8) -> CodecResult<()> {
 		if self.bit_pos != 0 {
 			self.bit_pos = 0;
 			self.byte_pos += 1;
 		}
+		if self.byte_pos >= self.buf.len() {
+			return Err(CodecError::BitstreamOverflow);
+		}
 		self.buf[self.byte_pos] = val;
 		self.byte_pos += 1;
+		Ok(())
 	}
 
 	pub fn bytes_written(&self) -> usize {
@@ -76,32 +81,31 @@ impl<'a> BitReader<'a> {
 		}
 	}
 
-	/// # Panics
-	///
-	/// Panics if the reader has exhausted the buffer.
-	pub fn read_bit(&mut self) -> bool {
+	pub fn read_bit(&mut self) -> CodecResult<bool> {
+		if self.byte_pos >= self.buf.len() {
+			return Err(CodecError::BitstreamUnderflow);
+		}
 		let val = (self.buf[self.byte_pos] >> self.bit_pos) & 1;
 		self.bit_pos += 1;
 		if self.bit_pos == 8 {
 			self.bit_pos = 0;
 			self.byte_pos += 1;
 		}
-		val != 0
+		Ok(val != 0)
 	}
 
 	/// Aligns to byte boundary, then reads.
-	///
-	/// # Panics
-	///
-	/// Panics if the reader has exhausted the buffer.
-	pub fn read_u8(&mut self) -> u8 {
+	pub fn read_u8(&mut self) -> CodecResult<u8> {
 		if self.bit_pos != 0 {
 			self.bit_pos = 0;
 			self.byte_pos += 1;
 		}
+		if self.byte_pos >= self.buf.len() {
+			return Err(CodecError::BitstreamUnderflow);
+		}
 		let val = self.buf[self.byte_pos];
 		self.byte_pos += 1;
-		val
+		Ok(val)
 	}
 }
 
@@ -110,7 +114,7 @@ impl<'a> BitReader<'a> {
 /// Partitions `delta` into 8-byte words. Zero words emit a `0` bit.
 /// Non-zero words emit a `1` bit, an 8-bit byte mask, and only the
 /// changed bytes. Returns the number of bytes written to `output`.
-pub fn byte_masked_encode(delta: &[u8], output: &mut [u8]) -> usize {
+pub fn byte_masked_encode(delta: &[u8], output: &mut [u8]) -> CodecResult<usize> {
 	let k = delta.len().div_ceil(8);
 	let mut writer = BitWriter::new(output);
 
@@ -124,9 +128,9 @@ pub fn byte_masked_encode(delta: &[u8], output: &mut [u8]) -> usize {
 		let word_val = u64::from_le_bytes(word);
 
 		if word_val == 0 {
-			writer.write_bit(false);
+			writer.write_bit(false)?;
 		} else {
-			writer.write_bit(true);
+			writer.write_bit(true)?;
 
 			let mut mask = 0u8;
 			for (j, &b) in word.iter().enumerate() {
@@ -134,45 +138,47 @@ pub fn byte_masked_encode(delta: &[u8], output: &mut [u8]) -> usize {
 					mask |= 1 << j;
 				}
 			}
-			writer.write_u8(mask);
+			writer.write_u8(mask)?;
 
 			for (j, &b) in word.iter().enumerate() {
 				if mask & (1 << j) != 0 {
-					writer.write_u8(b);
+					writer.write_u8(b)?;
 				}
 			}
 		}
 	}
 
-	writer.finish()
+	Ok(writer.finish())
 }
 
-/// CRC16-CCITT (polynomial 0x1021, init 0xFFFF).
-pub fn crc16(data: &[u8]) -> u16 {
-	let mut crc: u16 = 0xFFFF;
-	for &byte in data {
-		crc ^= (byte as u16) << 8;
-		for _ in 0..8 {
+/// CRC16-CCITT (polynomial 0x1021, init 0xFFFF) with 256-entry lookup table.
+const CRC16_TABLE: [u16; 256] = {
+	let mut table = [0u16; 256];
+	let mut i = 0u16;
+	while i < 256 {
+		let mut crc = i << 8;
+		let mut j = 0u8;
+		while j < 8 {
 			if crc & 0x8000 != 0 {
 				crc = (crc << 1) ^ 0x1021;
 			} else {
 				crc <<= 1;
 			}
+			j += 1;
 		}
+		table[i as usize] = crc;
+		i += 1;
 	}
-	crc
+	table
+};
+
+pub fn crc16(data: &[u8]) -> u16 {
+	crc16_update(0xFFFF, data)
 }
 
 pub fn crc16_update(mut crc: u16, data: &[u8]) -> u16 {
 	for &byte in data {
-		crc ^= (byte as u16) << 8;
-		for _ in 0..8 {
-			if crc & 0x8000 != 0 {
-				crc = (crc << 1) ^ 0x1021;
-			} else {
-				crc <<= 1;
-			}
-		}
+		crc = (crc << 8) ^ CRC16_TABLE[((crc >> 8) ^ byte as u16) as usize];
 	}
 	crc
 }
@@ -180,7 +186,7 @@ pub fn crc16_update(mut crc: u16, data: &[u8]) -> u16 {
 /// Decode a byte-masked sparse XOR delta into `output`.
 ///
 /// `output` must be pre-zeroed or contain the base state to XOR into.
-pub fn byte_masked_decode(encoded: &[u8], output: &mut [u8]) {
+pub fn byte_masked_decode(encoded: &[u8], output: &mut [u8]) -> CodecResult<()> {
 	let k = output.len().div_ceil(8);
 	let mut reader = BitReader::new(encoded);
 
@@ -188,19 +194,19 @@ pub fn byte_masked_decode(encoded: &[u8], output: &mut [u8]) {
 		let word_start = i * 8;
 		let word_end = std::cmp::min(word_start + 8, output.len());
 
-		let flag = reader.read_bit();
+		let flag = reader.read_bit()?;
 
 		if !flag {
 			for b in &mut output[word_start..word_end] {
 				*b = 0;
 			}
 		} else {
-			let mask = reader.read_u8();
+			let mask = reader.read_u8()?;
 
 			let mut word = [0u8; 8];
 			for (j, slot) in word.iter_mut().enumerate() {
 				if mask & (1 << j) != 0 {
-					*slot = reader.read_u8();
+					*slot = reader.read_u8()?;
 				}
 			}
 
@@ -208,4 +214,6 @@ pub fn byte_masked_decode(encoded: &[u8], output: &mut [u8]) {
 			output[word_start..word_end].copy_from_slice(&word[..copy_len]);
 		}
 	}
+
+	Ok(())
 }

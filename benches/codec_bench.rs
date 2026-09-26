@@ -7,7 +7,7 @@ fn bench_encode(c: &mut Criterion) {
 		group.bench_with_input(BenchmarkId::new("zero_delta", name), &size, |b, &size| {
 			let delta = vec![0u8; size];
 			let mut output = vec![0u8; 10 * size.div_ceil(8) + 1];
-			b.iter(|| phoros::codec::byte_masked_encode(&delta, &mut output));
+			b.iter(|| phoros::codec::byte_masked_encode(&delta, &mut output).unwrap());
 		});
 
 		group.bench_with_input(BenchmarkId::new("sparse_10pct", name), &size, |b, &size| {
@@ -16,13 +16,13 @@ fn bench_encode(c: &mut Criterion) {
 				delta[i] = 0xAB;
 			}
 			let mut output = vec![0u8; 10 * size.div_ceil(8) + 1];
-			b.iter(|| phoros::codec::byte_masked_encode(&delta, &mut output));
+			b.iter(|| phoros::codec::byte_masked_encode(&delta, &mut output).unwrap());
 		});
 
 		group.bench_with_input(BenchmarkId::new("full_delta", name), &size, |b, &size| {
 			let delta = vec![0xAB; size];
 			let mut output = vec![0u8; 10 * size.div_ceil(8) + 1];
-			b.iter(|| phoros::codec::byte_masked_encode(&delta, &mut output));
+			b.iter(|| phoros::codec::byte_masked_encode(&delta, &mut output).unwrap());
 		});
 	}
 
@@ -38,13 +38,13 @@ fn bench_decode(c: &mut Criterion) {
 			delta[i] = 0xAB;
 		}
 		let mut encoded = vec![0u8; 10 * size.div_ceil(8) + 1];
-		let len = phoros::codec::byte_masked_encode(&delta, &mut encoded);
+		let len = phoros::codec::byte_masked_encode(&delta, &mut encoded).unwrap();
 		encoded.truncate(len);
 
 		group.bench_with_input(BenchmarkId::new("sparse_10pct", name), &encoded, |b, enc| {
 			b.iter(|| {
 				let mut output = vec![0u8; size];
-				phoros::codec::byte_masked_decode(enc, &mut output);
+				phoros::codec::byte_masked_decode(enc, &mut output).unwrap();
 			});
 		});
 	}
