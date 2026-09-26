@@ -490,6 +490,64 @@ where
 	}
 }
 
+// Type aliases
+
+/// Heap-backed ring buffer
+pub type BoxedBPRB<T, const STATE_SIZE: usize, const MAX_ENCODED: usize> =
+	BPRB<T, alloc::boxed::Box<[u8]>, STATE_SIZE, MAX_ENCODED>;
+
+/// Stack-backed ring buffer
+pub type StackBPRB<T, const STATE_SIZE: usize, const MAX_ENCODED: usize, const ARENA_SIZE: usize> =
+	BPRB<T, [u8; ARENA_SIZE], STATE_SIZE, MAX_ENCODED>;
+
+/// Construct a [`BoxedBPRB`] with `STATE_SIZE` and `MAX_ENCODED` derived
+/// automatically from the concrete type.
+///
+/// # Examples
+///
+/// ```
+/// let buf = phoros::bprb!(u64 => boxed(64 * 1024)).unwrap();
+/// ```
+///
+/// With custom anchor interval:
+///
+/// ```
+/// let buf = phoros::bprb!(u64 => boxed(64 * 1024, 10)).unwrap();
+/// ```
+#[macro_export]
+macro_rules! bprb {
+	($t:ty => boxed($arena_bytes:expr)) => {{
+		const __PHOROS_STATE_SIZE: usize = core::mem::size_of::<$t>();
+		const __PHOROS_MAX_ENCODED: usize = 10 * ((__PHOROS_STATE_SIZE + 7) / 8) + 1;
+		$crate::BoxedBPRB::<$t, __PHOROS_STATE_SIZE, __PHOROS_MAX_ENCODED>::new_boxed(
+			$arena_bytes,
+			$crate::DEFAULT_ANCHOR_INTERVAL,
+		)
+	}};
+	($t:ty => boxed($arena_bytes:expr, $anchor_interval:expr)) => {{
+		const __PHOROS_STATE_SIZE: usize = core::mem::size_of::<$t>();
+		const __PHOROS_MAX_ENCODED: usize = 10 * ((__PHOROS_STATE_SIZE + 7) / 8) + 1;
+		$crate::BoxedBPRB::<$t, __PHOROS_STATE_SIZE, __PHOROS_MAX_ENCODED>::new_boxed(
+			$arena_bytes,
+			$anchor_interval,
+		)
+	}};
+	($t:ty => stack($arena_size:expr)) => {{
+		const __PHOROS_STATE_SIZE: usize = core::mem::size_of::<$t>();
+		const __PHOROS_MAX_ENCODED: usize = 10 * ((__PHOROS_STATE_SIZE + 7) / 8) + 1;
+		$crate::StackBPRB::<$t, __PHOROS_STATE_SIZE, __PHOROS_MAX_ENCODED, $arena_size>::new_stack(
+			$crate::DEFAULT_ANCHOR_INTERVAL,
+		)
+	}};
+	($t:ty => stack($arena_size:expr, $anchor_interval:expr)) => {{
+		const __PHOROS_STATE_SIZE: usize = core::mem::size_of::<$t>();
+		const __PHOROS_MAX_ENCODED: usize = 10 * ((__PHOROS_STATE_SIZE + 7) / 8) + 1;
+		$crate::StackBPRB::<$t, __PHOROS_STATE_SIZE, __PHOROS_MAX_ENCODED, $arena_size>::new_stack(
+			$anchor_interval,
+		)
+	}};
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
