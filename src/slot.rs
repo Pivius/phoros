@@ -10,6 +10,7 @@ pub enum SlotType {
 }
 
 impl SlotType {
+	#[inline]
 	pub fn from_u8(val: u8) -> Option<Self> {
 		match val {
 			SLOT_TYPE_FULL_SNAPSHOT => Some(SlotType::FullSnapshot),
@@ -39,6 +40,7 @@ impl SlotHeader {
 	}
 
 	/// Serialize into 16 little-endian bytes.
+	#[inline]
 	pub fn to_bytes(&self) -> [u8; SLOT_HEADER_SIZE] {
 		let mut b = [0u8; SLOT_HEADER_SIZE];
 		b[0..8].copy_from_slice(&self.frame.to_le_bytes());
@@ -51,6 +53,7 @@ impl SlotHeader {
 
 	/// Deserialize from at least 16 bytes. Returns `None` on short input or an
 	/// invalid `kind` discriminant.
+	#[inline]
 	pub fn from_bytes(data: &[u8]) -> Option<Self> {
 		let bytes: &[u8; SLOT_HEADER_SIZE] = data.get(..SLOT_HEADER_SIZE)?.try_into().ok()?;
 

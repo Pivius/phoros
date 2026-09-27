@@ -64,6 +64,7 @@ impl AnchorIndex {
 	}
 
 	/// Binary search for the nearest anchor with `frame <= target_frame`.
+	#[inline]
 	pub fn find_nearest_le(&self, target_frame: u64) -> Option<AnchorEntry> {
 		if self.count == 0 {
 			return None;
@@ -92,34 +93,27 @@ impl AnchorIndex {
 
 	/// Drop all entries with `frame < min_frame`.
 	pub fn evict_before(&mut self, min_frame: u64) {
-		let new_count = self.entries[..self.count]
-			.iter()
-			.filter(|e| e.is_some_and(|e| e.frame >= min_frame))
-			.count();
-
 		let mut write = 0;
 		for read in 0..self.count {
 			if let Some(entry) = self.entries[read] {
 				if entry.frame >= min_frame {
 					self.entries[write] = Some(entry);
 					write += 1;
-				} else {
-					self.entries[read] = None;
 				}
 			}
 		}
-
-		for i in new_count..self.count {
+		for i in write..self.count {
 			self.entries[i] = None;
 		}
-
-		self.count = new_count;
+		self.count = write;
 	}
 
+	#[inline]
 	pub fn len(&self) -> usize {
 		self.count
 	}
 
+	#[inline]
 	pub fn is_empty(&self) -> bool {
 		self.count == 0
 	}

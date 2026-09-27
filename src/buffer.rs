@@ -11,6 +11,7 @@ use crate::{
 pub const DEFAULT_ANCHOR_INTERVAL: u64 = 60;
 pub const DEFAULT_DELTA_THRESHOLD: f64 = 0.70;
 
+#[inline]
 fn arena_read_into(arena: &[u8], off: u32, buf: &mut [u8]) {
 	let data_len = arena.len();
 	if data_len == 0 || buf.is_empty() {
@@ -25,6 +26,7 @@ fn arena_read_into(arena: &[u8], off: u32, buf: &mut [u8]) {
 	}
 }
 
+#[inline]
 fn arena_write_to(arena: &mut [u8], off: u32, bytes: &[u8]) {
 	let data_len = arena.len();
 	if data_len == 0 || bytes.is_empty() {
@@ -38,6 +40,7 @@ fn arena_write_to(arena: &mut [u8], off: u32, bytes: &[u8]) {
 	}
 }
 
+#[inline]
 fn compute_checksum(frame: u64, kind: u8, payload: &[u8]) -> u16 {
 	let mut crc = 0xFFFF;
 	crc = codec::crc16_update(crc, &frame.to_le_bytes());
@@ -47,13 +50,14 @@ fn compute_checksum(frame: u64, kind: u8, payload: &[u8]) -> u16 {
 	crc
 }
 
+#[inline]
 fn read_header_at(arena: &[u8], off: u32) -> Option<SlotHeader> {
 	let mut buf = [0u8; SLOT_HEADER_SIZE];
 	arena_read_into(arena, off, &mut buf);
 	SlotHeader::from_bytes(&buf)
 }
 
-/// XOR `src` into `dst` in 8-byte chunks
+#[inline]
 fn xor_into(dst: &mut [u8], src: &[u8]) {
 	let n = core::cmp::min(dst.len(), src.len());
 	let full = n / 8;
@@ -74,13 +78,13 @@ fn xor_into(dst: &mut [u8], src: &[u8]) {
 pub struct BPRB<T, S: ArenaStorage, const STATE_SIZE: usize, const MAX_ENCODED: usize> {
 	storage: S,
 	header: ArenaHeader,
-	used_bytes: u32,
-	current_head_state: Option<T>,
 	anchor_index: AnchorIndex,
+	current_head_state: Option<T>,
 	frame_counter: u64,
-	diverged: bool,
 	anchor_interval: u64,
 	delta_threshold: f64,
+	used_bytes: u32,
+	diverged: bool,
 	_marker: PhantomData<T>,
 }
 
@@ -115,13 +119,13 @@ where
 		Ok(Self {
 			storage,
 			header,
-			used_bytes: 0,
-			current_head_state: None,
 			anchor_index: AnchorIndex::new(),
+			current_head_state: None,
 			frame_counter: 0,
-			diverged: false,
 			anchor_interval,
 			delta_threshold: DEFAULT_DELTA_THRESHOLD,
+			used_bytes: 0,
+			diverged: false,
 			_marker: PhantomData,
 		})
 	}
@@ -150,8 +154,9 @@ where
 					.as_ref()
 					.expect("current_head_state must be set after first snapshot"),
 			);
-			xor_into(&mut buf_delta, state_bytes);
-			xor_into(&mut buf_delta, current);
+			for (d, (s, c)) in buf_delta.iter_mut().zip(state_bytes.iter().zip(current.iter())) {
+				*d = *s ^ *c;
+			}
 
 			let encoded_len = codec::byte_masked_encode(&buf_delta, &mut buf_encoded)?;
 
@@ -304,6 +309,7 @@ where
 		Ok(state)
 	}
 
+	#[inline]
 	pub fn current_frame(&self) -> u64 {
 		self.frame_counter
 	}
@@ -322,10 +328,12 @@ where
 		Some(self.frame_counter - 1)
 	}
 
+	#[inline]
 	pub fn len(&self) -> usize {
 		self.header.live_slot_count as usize
 	}
 
+	#[inline]
 	pub fn is_empty(&self) -> bool {
 		self.frame_counter == 0
 	}
@@ -344,6 +352,7 @@ where
 
 	// Private
 
+	#[inline]
 	fn free_space(&self) -> u32 {
 		self.header.data_area_len.saturating_sub(self.used_bytes)
 	}
@@ -380,6 +389,7 @@ where
 		Ok(header)
 	}
 
+	#[inline]
 	fn should_store_snapshot(&self, _state_bytes: &[u8], frame: u64) -> bool {
 		if self.current_head_state.is_none() {
 			return true;
@@ -451,16 +461,19 @@ where
 		self.anchor_index.evict_before(boundary);
 	}
 
+	#[inline]
 	fn state_as_bytes(state: &T) -> &[u8] {
 		// SAFETY: T is Copy + Sized + needs_drop == false.
 		unsafe { core::slice::from_raw_parts(state as *const T as *const u8, STATE_SIZE) }
 	}
 
+	#[inline]
 	fn state_as_bytes_mut(state: &mut T) -> &mut [u8] {
 		// SAFETY: T is Copy + Sized + needs_drop == false.
 		unsafe { core::slice::from_raw_parts_mut(state as *mut T as *mut u8, STATE_SIZE) }
 	}
 
+	#[inline]
 	fn bytes_to_state(bytes: &[u8]) -> T {
 		core::debug_assert_eq!(bytes.len(), STATE_SIZE);
 		// SAFETY: T is Copy + no-drop. read_unaligned handles unaligned source.

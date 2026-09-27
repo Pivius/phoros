@@ -176,6 +176,7 @@ pub fn crc16(data: &[u8]) -> u16 {
 	crc16_update(0xFFFF, data)
 }
 
+#[inline]
 pub fn crc16_update(mut crc: u16, data: &[u8]) -> u16 {
 	for &byte in data {
 		crc = (crc << 8) ^ CRC16_TABLE[((crc >> 8) ^ byte as u16) as usize];
