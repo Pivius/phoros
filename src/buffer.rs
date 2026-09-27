@@ -492,11 +492,12 @@ where
 
 // Type aliases
 
-/// Heap-backed ring buffer
+/// Requires the `alloc` feature.
+#[cfg(feature = "alloc")]
 pub type BoxedBPRB<T, const STATE_SIZE: usize, const MAX_ENCODED: usize> =
 	BPRB<T, alloc::boxed::Box<[u8]>, STATE_SIZE, MAX_ENCODED>;
 
-/// Stack-backed ring buffer
+/// Works in `no_std` without `alloc`.
 pub type StackBPRB<T, const STATE_SIZE: usize, const MAX_ENCODED: usize, const ARENA_SIZE: usize> =
 	BPRB<T, [u8; ARENA_SIZE], STATE_SIZE, MAX_ENCODED>;
 
