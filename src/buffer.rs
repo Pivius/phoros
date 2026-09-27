@@ -189,7 +189,7 @@ where
 			kind: kind as u8,
 			payload_len: payload_len as u16,
 			checksum,
-			reserved: 0,
+			reserved: [0; 3],
 		};
 		let header_bytes = slot_header.to_bytes();
 
