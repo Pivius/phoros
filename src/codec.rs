@@ -125,25 +125,25 @@ pub fn byte_masked_encode(delta: &[u8], output: &mut [u8]) -> CodecResult<usize>
 		let mut word = [0u8; 8];
 		word[..word_end - word_start].copy_from_slice(&delta[word_start..word_end]);
 
-		let word_val = u64::from_le_bytes(word);
-
-		if word_val == 0 {
+		if word == [0; 8] {
 			writer.write_bit(false)?;
 		} else {
 			writer.write_bit(true)?;
 
+			// Single pass: build mask and collect non-zero bytes.
 			let mut mask = 0u8;
+			let mut non_zero = [0u8; 8];
+			let mut count = 0;
 			for (j, &b) in word.iter().enumerate() {
 				if b != 0 {
 					mask |= 1 << j;
+					non_zero[count] = b;
+					count += 1;
 				}
 			}
 			writer.write_u8(mask)?;
-
-			for (j, &b) in word.iter().enumerate() {
-				if mask & (1 << j) != 0 {
-					writer.write_u8(b)?;
-				}
+			for &b in &non_zero[..count] {
+				writer.write_u8(b)?;
 			}
 		}
 	}
@@ -194,25 +194,21 @@ pub fn byte_masked_decode(encoded: &[u8], output: &mut [u8]) -> CodecResult<()> 
 	for i in 0..k {
 		let word_start = i * 8;
 		let word_end = core::cmp::min(word_start + 8, output.len());
+		let word_len = word_end - word_start;
 
 		let flag = reader.read_bit()?;
 
 		if !flag {
-			for b in &mut output[word_start..word_end] {
-				*b = 0;
-			}
+			output[word_start..word_end].fill(0);
 		} else {
 			let mask = reader.read_u8()?;
-
-			let mut word = [0u8; 8];
-			for (j, slot) in word.iter_mut().enumerate() {
-				if mask & (1 << j) != 0 {
-					*slot = reader.read_u8()?;
-				}
+			for j in 0..word_len {
+				output[word_start + j] = if mask & (1 << j) != 0 {
+					reader.read_u8()?
+				} else {
+					0
+				};
 			}
-
-			let copy_len = word_end - word_start;
-			output[word_start..word_end].copy_from_slice(&word[..copy_len]);
 		}
 	}
 
