@@ -227,8 +227,11 @@ where
 
 		let mut buf_encoded = [0u8; MAX_ENCODED];
 
-		// Read anchor payload (full snapshot) into working byte array.
+		// Read anchor payload into working byte array.
 		let anchor_header = self.read_slot_at(anchor.offset, &mut buf_encoded)?;
+		if anchor_header.payload_len as usize != STATE_SIZE {
+			return Err(RollbackError::CorruptedChain);
+		}
 		let mut working = [0u8; STATE_SIZE];
 		working[..anchor_header.payload_len as usize]
 			.copy_from_slice(&buf_encoded[..anchor_header.payload_len as usize]);
@@ -250,10 +253,16 @@ where
 
 			match SlotType::from_u8(header.kind) {
 				Some(SlotType::FullSnapshot) => {
+					if header.payload_len as usize != STATE_SIZE {
+						return Err(RollbackError::CorruptedChain);
+					}
 					working[..header.payload_len as usize]
 						.copy_from_slice(&buf_encoded[..header.payload_len as usize]);
 				}
 				Some(SlotType::Delta) => {
+					if header.payload_len as usize > MAX_ENCODED {
+						return Err(RollbackError::CorruptedChain);
+					}
 					buf_delta.fill(0);
 					codec::byte_masked_decode(
 						&buf_encoded[..header.payload_len as usize],
@@ -354,6 +363,9 @@ where
 			read_header_at(self.storage.as_slice(), offset).ok_or(RollbackError::ArenaCorrupted)?;
 
 		let payload_len = header.payload_len as usize;
+		if payload_len > payload_buf.len() {
+			return Err(RollbackError::ArenaCorrupted);
+		}
 		arena_read_into(
 			self.storage.as_slice(),
 			offset + SLOT_HEADER_SIZE as u32,
