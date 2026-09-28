@@ -1,3 +1,30 @@
+//! Zero-allocation ring buffer with XOR delta encoding and state rollback.
+//!
+//! `phoros` records state snapshots and byte-masked deltas into a
+//! pre-allocated arena.
+//!
+//! # Quickstart
+//!
+//! ```
+//! use phoros::bprb;
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let mut buf = bprb!(u64 => boxed(1024))?;
+//! buf.snapshot(&42u64)?;
+//! assert_eq!(buf.rollback_to(0)?, 42u64);
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # Feature flags
+//!
+//! | Feature | Default | Enables |
+//! |---------|---------|---------|
+//! | `std` | Yes | `BoxedBPRB`, `std::error::Error` impls |
+//! | `alloc` | Via `std` | `BoxedBPRB`, `bprb!()` boxed variant |
+//!
+//! Bare `no_std` (no features) gives `StackBPRB` and `bprb!()` stack variant only.
+
 #![cfg_attr(not(feature = "std"), no_std)]
 
 extern crate alloc;
@@ -16,8 +43,6 @@ pub use buffer::BoxedBPRB;
 pub use buffer::StackBPRB;
 pub use buffer::{DEFAULT_ANCHOR_INTERVAL, DEFAULT_DELTA_THRESHOLD};
 pub use error::{BufferError, CodecError, RollbackError};
-pub use index::AnchorIndex;
-pub use slot::SlotType;
 pub use storage::ArenaStorage;
 
 const _: () = assert!(
@@ -51,10 +76,10 @@ mod tests {
 
 	#[test]
 	fn slot_kind_roundtrip() {
-		assert_eq!(SlotType::from_u8(0x01), Some(SlotType::FullSnapshot));
-		assert_eq!(SlotType::from_u8(0x02), Some(SlotType::Delta));
-		assert_eq!(SlotType::from_u8(0x00), None);
-		assert_eq!(SlotType::from_u8(0xFF), None);
+		assert_eq!(slot::SlotType::from_u8(0x01), Some(slot::SlotType::FullSnapshot));
+		assert_eq!(slot::SlotType::from_u8(0x02), Some(slot::SlotType::Delta));
+		assert_eq!(slot::SlotType::from_u8(0x00), None);
+		assert_eq!(slot::SlotType::from_u8(0xFF), None);
 	}
 
 	#[test]

@@ -1,9 +1,23 @@
 pub const MAX_ANCHORS: usize = 32;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AnchorEntry {
-	pub frame: u64,
-	pub offset: u32,
+	frame: u64,
+	offset: u32,
+}
+
+impl AnchorEntry {
+	/// The frame number of this anchor.
+	#[inline]
+	pub fn frame(self) -> u64 {
+		self.frame
+	}
+
+	/// The byte offset of this anchor within the arena.
+	#[inline]
+	pub fn offset(self) -> u32 {
+		self.offset
+	}
 }
 
 /// Fixed-capacity sorted index mapping frame numbers to arena byte offsets.\

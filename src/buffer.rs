@@ -72,9 +72,10 @@ fn xor_into(dst: &mut [u8], src: &[u8]) {
 	}
 }
 
-/// Zero-allocation circular state history.
+/// Zero-allocation state history.
 ///
 /// `T` must be `Copy + Sized + Send + 'static` with no drop logic.
+#[derive(Debug)]
 pub struct BPRB<T, S: ArenaStorage, const STATE_SIZE: usize, const MAX_ENCODED: usize> {
 	storage: S,
 	header: ArenaHeader,
@@ -135,6 +136,15 @@ where
 		self
 	}
 
+	/// Record `state` as a new frame.
+	///
+	/// Stores a full snapshot on the first frame, every `anchor_interval`
+	/// frames, or when the compressed delta exceeds `delta_threshold`.
+	/// Otherwise stores a compressed XOR delta.
+	///
+	/// # Errors
+	///
+	/// Returns [`BufferError::Codec`] if the internal bitstream encoder overflows.
 	pub fn snapshot(&mut self, state: &T) -> Result<(), BufferError> {
 		let frame = self.frame_counter;
 		let state_bytes = Self::state_as_bytes(state);
@@ -220,6 +230,14 @@ where
 
 	/// Reconstruct the state at `target_frame` by finding the nearest anchor
 	/// and walking the chain forward. Updates the internal head state.
+	///
+	/// # Errors
+	///
+	/// - [`RollbackError::FrameEvicted`] if `target_frame` was evicted from the arena.
+	/// - [`RollbackError::CorruptedChain`] if a slot header is invalid, a
+	///   payload length is inconsistent, or the delta chain is broken.
+	/// - [`RollbackError::ArenaCorrupted`] if the arena header is unreadable.
+	/// - [`RollbackError::Codec`] if the internal bitstream decoder overflows.
 	pub fn rollback_to(&mut self, target_frame: u64) -> Result<T, RollbackError> {
 		if target_frame > self.frame_counter.saturating_sub(1) {
 			return Err(RollbackError::FrameEvicted);
@@ -233,7 +251,7 @@ where
 		let mut buf_encoded = [0u8; MAX_ENCODED];
 
 		// Read anchor payload into working byte array.
-		let anchor_header = self.read_slot_at(anchor.offset, &mut buf_encoded)?;
+		let anchor_header = self.read_slot_at(anchor.offset(), &mut buf_encoded)?;
 		if anchor_header.payload_len as usize != STATE_SIZE {
 			return Err(RollbackError::CorruptedChain);
 		}
@@ -242,14 +260,14 @@ where
 			.copy_from_slice(&buf_encoded[..anchor_header.payload_len as usize]);
 
 		let mut offset = next_slot_offset(
-			anchor.offset,
+			anchor.offset(),
 			anchor_header.payload_len,
 			self.header.data_area_len,
 		);
 
 		let mut buf_delta = [0u8; STATE_SIZE];
 
-		for expected_frame in (anchor.frame + 1)..=target_frame {
+		for expected_frame in (anchor.frame() + 1)..=target_frame {
 			let header = self.read_slot_at(offset, &mut buf_encoded)?;
 
 			if header.frame != expected_frame {
@@ -293,6 +311,14 @@ where
 		Ok(result)
 	}
 
+	/// Reconstruct the state at `frame_idx`, XOR `delta` into it, update the
+	/// internal head state, and return the result.
+	///
+	/// # Errors
+	///
+	/// - [`RollbackError::CorruptedChain`] if `delta.len() != STATE_SIZE` or
+	///   if the underlying `rollback_to` fails.
+	/// - Other variants as documented on [`rollback_to`](Self::rollback_to).
 	pub fn apply_delta(&mut self, frame_idx: u64, delta: &[u8]) -> Result<T, RollbackError> {
 		if delta.len() != STATE_SIZE {
 			return Err(RollbackError::CorruptedChain);
@@ -490,6 +516,11 @@ where
 	T: Copy + Sized + Send + 'static,
 {
 	/// Create a heap-backed buffer. The arena is allocated once and never resized.
+	///
+	/// # Errors
+	///
+	/// - [`BufferError::ArenaFull`] if `arena_bytes` is too small to hold one slot.
+	/// - [`BufferError::InvalidState`] if `T` has drop logic.
 	pub fn new_boxed(arena_bytes: usize, anchor_interval: u64) -> Result<Self, BufferError> {
 		let arena = alloc::vec![0u8; arena_bytes].into_boxed_slice();
 		Self::from_storage(arena, anchor_interval)
@@ -506,6 +537,11 @@ where
 	T: Copy + Sized + Send + 'static,
 {
 	/// Create a stack-backed buffer. The arena is a fixed array on the stack.
+	///
+	/// # Errors
+	///
+	/// - [`BufferError::ArenaFull`] if `ARENA_SIZE` is too small to hold one slot.
+	/// - [`BufferError::InvalidState`] if `T` has drop logic.
 	pub fn new_stack(anchor_interval: u64) -> Result<Self, BufferError> {
 		Self::from_storage([0u8; ARENA_SIZE], anchor_interval)
 	}

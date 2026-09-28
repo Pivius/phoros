@@ -22,7 +22,7 @@ impl SlotType {
 
 /// 16-byte header at the start of each slot in the arena.
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SlotHeader {
 	pub frame: u64,
 	pub payload_len: u16,
