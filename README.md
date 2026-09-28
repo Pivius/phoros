@@ -1,6 +1,6 @@
 # phoros
 
-A circular ring buffer for state snapshotting and rollback in Rust.
+A ring buffer for state snapshotting and rollback in Rust.
 
 `phoros` tracks historical state changes using byte deltas anchored to periodic snapshots.  
 Storage is fully generic over stack arrays, borrowed buffers, or heap slices, making it usable in both `#![no_std]` and standard environments.
