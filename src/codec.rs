@@ -11,7 +11,7 @@ pub struct BitWriter<'a> {
 
 impl<'a> BitWriter<'a> {
 	/// Buffer must be large enough for the encoded output.\
-	/// Maximum encoded size: `9 * ceil(|T| / 8)` bytes.
+	/// Maximum encoded size: `10 * ceil(|T| / 8) + 1` bytes.
 	pub fn new(buf: &'a mut [u8]) -> Self {
 		Self {
 			buf,

@@ -1,78 +1,76 @@
 # phoros
 
-phoros is a zero-allocation bit-packed ring buffer with XOR delta encoding along with state rollback.
+A circular ring buffer for state snapshotting and rollback in Rust.
 
-Low-latency systems can use this to get historical state, undo/redo state trees, and lightweight state telemetry 
-without triggering runtime heap allocation.
+`phoros` tracks historical state changes using byte deltas anchored to periodic snapshots.  
+Storage is fully generic over stack arrays, borrowed buffers, or heap slices, making it usable in both `#![no_std]` and standard environments.
 
-## Data Structures
+## Usage
 
-### `ArenaHeader` (32 bytes)
+Add `phoros` to your `Cargo.toml`:
 
-Ring state and offsets are maintained by storing them at the top of the arena.
+```toml
+[dependencies]
+phoros = "0.1"
+```
 
-- `magic`: `0x42505242` (BPRB)
-- `head/tail_offset`: Track the physical bounds of valid ring data.
-- `data_area_len`: Physical capacity of the data arena.
+For `#![no_std]` environments, disable default features:
 
-### `SlotHeader` (16 bytes)
-
-This struct prefixes every version entry in the buffer.
-
-- `frame`: A monotonic sequence index.
-- `kind`: `FullSnapshot` or `Delta`.
-- `payload_len` & `checksum`: Size and integrity validation.
+```toml
+[dependencies]
+phoros = { version = "0.1", default-features = false }
+```
 
 ## Quickstart
 
-### Prerequisites & Invariants
-
-Types stored in `BPRB<T>` are limited to Plain Old Data. They can't implement `Drop`, and must not contain pointers, 
-`Vec` or any dynamic heap references inside `T`.
+### Heap-backed
 
 ```rust
-use phoros::BPRB;
+use phoros::{bprb, BufferError};
 
-#[repr(C)]
-#[derive(Clone, Copy, PartialEq, Debug)]
-struct State {
-	cursor_position: u32,
-	selection_length: u32,
-	document_flags: u16,
-	viewport_offset: u16
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct TransformState {
+    coords: (i32, i32),
+    scale: i32,
+    rot: i32,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-	// 1 MB continuous memory, placing keyframes every 50 actions.
-	let arena_size = 1024 * 1024;
-	let anchor_interval = 50;
+fn main() -> Result<(), BufferError> {
+    // Allocate 1MB arena on the heap, anchor every 60 frames.
+    let mut history = bprb!(TransformState => boxed(1024 * 1024, 60))?;
+    let mut state = TransformState { coords: (0, 0), scale: 1, rot: 0 };
 
-	let mut history = BPRB::<State>::new(arena_size, anchor_interval)?;
+    for _ in 0..100 {
+        state.coords.0 += 1;
+        history.snapshot(&state)?;
+    }
 
-	let mut state = State {
-		cursor_position: 0,
-		selection_length: 0,
-		document_flags: 0b0001,
-		viewport_offset: 0
-	};
+    let restored = history.rollback_to(42)?;
+    assert_eq!(restored.coords.0, 43);
 
-	// Move cursor action
-	for step in 0..100 {
-		state.cursor_position += 1;
-		history.snapshot(&state)?;
-	}
-
-	// Perform an uno action which reverts state to step 42
-	let undo_target = 42;
-	let restored_state = history.rollback_to(undo_target)?;
-
-	println!("Restored State at Action {}: {:?}", undo_target, restored_state)?;
-	Ok(())
+    Ok(())
 }
 ```
 
-## State Reconstruction
+### Stack-backed
 
-1. `rollback_to(step)` uses `AnchorIndex` to perform a binary search for the nearest prior `FullSnapshot` sequence when called.
-2. Memory gets the nearest base snapshot read directly into it.
-3. The process then iterates forward through intermediate sparse deltas, decoding bit-masks and XORing byte changes directly into memory until the target! step is reconstructed exactly.
+```rust
+use phoros::bprb;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct EmbeddedState {
+    sensor_val: u32,
+}
+
+fn run() {
+    // 16KB arena on the stack.
+    let mut history = bprb!(EmbeddedState => stack(16384)).unwrap();
+    let state = EmbeddedState { sensor_val: 42 };
+
+    history.snapshot(&state).unwrap();
+}
+```
+
+## Type Constraints
+
+States managed by `phoros` must implement `Copy + Sized + Send + 'static` and `needs_drop::<T>() == false`.
