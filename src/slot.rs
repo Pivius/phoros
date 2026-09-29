@@ -2,14 +2,31 @@ pub const SLOT_HEADER_SIZE: usize = 16;
 pub const SLOT_TYPE_FULL_SNAPSHOT: u8 = 0x01;
 pub const SLOT_TYPE_DELTA: u8 = 0x02;
 
+/// Classification of a slot in the arena.
+///
+/// # Examples
+///
+/// ```
+/// use phoros::SlotType;
+///
+/// assert_eq!(SlotType::from_u8(0x01), Some(SlotType::FullSnapshot));
+/// assert_eq!(SlotType::from_u8(0x02), Some(SlotType::Delta));
+/// assert_eq!(SlotType::from_u8(0xFF), None);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(u8)]
 pub enum SlotType {
+	/// A complete state snapshot.
 	FullSnapshot = SLOT_TYPE_FULL_SNAPSHOT,
+	/// A compressed XOR delta from the previous frame.
 	Delta = SLOT_TYPE_DELTA,
 }
 
 impl SlotType {
+	/// Convert a raw byte to a `SlotType`.
+	///
+	/// Returns `None` for unknown discriminants.
 	#[inline]
 	pub fn from_u8(val: u8) -> Option<Self> {
 		match val {
@@ -21,8 +38,21 @@ impl SlotType {
 }
 
 /// 16-byte header at the start of each slot in the arena.
+///
+/// Uses `#[repr(C)]` with explicit layout.
+///
+/// ```text
+/// Offset  Size  Field
+/// ──────  ────  ─────────────
+///   0       8   frame
+///   8       2   payload_len
+///  10       2   checksum
+///  12       1   kind
+///  13       3   reserved
+/// ```
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SlotHeader {
 	pub frame: u64,
 	pub payload_len: u16,

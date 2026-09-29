@@ -1,6 +1,8 @@
 pub const MAX_ANCHORS: usize = 32;
 
+/// An anchor entry mapping a frame number to an arena byte offset.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AnchorEntry {
 	frame: u64,
 	offset: u32,
@@ -20,8 +22,24 @@ impl AnchorEntry {
 	}
 }
 
-/// Fixed-capacity sorted index mapping frame numbers to arena byte offsets.\
+/// Fixed-capacity sorted index mapping frame numbers to arena byte offsets.
+///
 /// O(log n) lookup of the nearest anchor for rollback reconstruction.
+///
+/// # Examples
+///
+/// ```
+/// use phoros::BPRB;
+///
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let mut buf = BPRB::<u64, [u8; 4096], 8, 11>::new_stack(10)?;
+/// buf.snapshot(&1u64)?;
+/// buf.snapshot(&2u64)?;
+/// buf.snapshot(&3u64)?;
+/// assert_eq!(buf.rollback_to(2)?, 2u64);
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Debug)]
 pub struct AnchorIndex {
 	entries: [Option<AnchorEntry>; MAX_ANCHORS],
@@ -29,6 +47,21 @@ pub struct AnchorIndex {
 }
 
 impl AnchorIndex {
+	/// Create an empty index.
+	///
+	/// # Examples
+	///
+	/// ```
+	/// use phoros::BPRB;
+	///
+	/// # fn example() -> Result<(), phoros::BufferError> {
+	/// let mut buf = BPRB::<u64, [u8; 4096], 8, 11>::new_stack(10)?;
+	/// assert!(buf.is_empty());
+	/// buf.snapshot(&42u64)?;
+	/// assert_eq!(buf.len(), 1);
+	/// # Ok(())
+	/// # }
+	/// ```
 	pub fn new() -> Self {
 		Self {
 			entries: [None; MAX_ANCHORS],
@@ -36,7 +69,8 @@ impl AnchorIndex {
 		}
 	}
 
-	/// Insert an anchor, maintaining sorted order by frame.\
+	/// Insert an anchor, maintaining sorted order by frame.
+	///
 	/// Returns `false` if the index is full.
 	pub fn insert(&mut self, frame: u64, offset: u32) -> bool {
 		if self.count >= MAX_ANCHORS {

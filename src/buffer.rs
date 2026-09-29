@@ -74,7 +74,24 @@ fn xor_into(dst: &mut [u8], src: &[u8]) {
 
 /// Zero-allocation state history.
 ///
+/// Records state snapshots and byte-masked deltas into a pre-allocated
+/// arena. The arena storage is generic over [`ArenaStorage`].
+///
 /// `T` must be `Copy + Sized + Send + 'static` with no drop logic.
+///
+/// # Examples
+///
+/// ```
+/// use phoros::bprb;
+///
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let mut buf = bprb!(u64 => boxed(1024))?;
+/// buf.snapshot(&1u64)?;
+/// buf.snapshot(&2u64)?;
+/// assert_eq!(buf.rollback_to(0)?, 1u64);
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Debug)]
 pub struct BPRB<T, S: ArenaStorage, const STATE_SIZE: usize, const MAX_ENCODED: usize> {
 	storage: S,
@@ -131,6 +148,10 @@ where
 		})
 	}
 
+	/// Set the delta compression threshold.
+	///
+	/// When a compressed delta exceeds `threshold * STATE_SIZE` bytes, a full
+	/// snapshot is stored instead. Defaults to `0.70`.
 	pub fn with_delta_threshold(mut self, threshold: f64) -> Self {
 		self.delta_threshold = threshold;
 		self
@@ -335,11 +356,13 @@ where
 		Ok(state)
 	}
 
+	/// Returns the current frame counter.
 	#[inline]
 	pub fn current_frame(&self) -> u64 {
 		self.frame_counter
 	}
 
+	/// Returns the frame number of the oldest live slot, or `None` if empty.
 	pub fn oldest_frame(&self) -> Option<u64> {
 		if self.frame_counter == 0 || self.header.live_slot_count == 0 {
 			return None;
@@ -347,6 +370,7 @@ where
 		read_header_at(self.storage.as_slice(), self.header.head_offset).map(|h| h.frame)
 	}
 
+	/// Returns the frame number of the newest live slot, or `None` if empty.
 	pub fn newest_frame(&self) -> Option<u64> {
 		if self.frame_counter == 0 {
 			return None;
@@ -354,24 +378,29 @@ where
 		Some(self.frame_counter - 1)
 	}
 
+	/// Returns the number of live (unevicted) slots in the arena.
 	#[inline]
 	pub fn len(&self) -> usize {
 		self.header.live_slot_count as usize
 	}
 
+	/// Returns `true` if no frames have been recorded.
 	#[inline]
 	pub fn is_empty(&self) -> bool {
 		self.frame_counter == 0
 	}
 
+	/// Returns the total memory usage in bytes, arena + struct overhead.
 	pub fn memory_usage(&self) -> usize {
 		self.storage.len() + core::mem::size_of::<Self>()
 	}
 
+	/// Borrow the arena storage immutably.
 	pub fn storage(&self) -> &S {
 		&self.storage
 	}
 
+	/// Borrow the arena storage mutably.
 	pub fn storage_mut(&mut self) -> &mut S {
 		&mut self.storage
 	}
@@ -553,12 +582,16 @@ where
 
 // Type aliases
 
-/// Requires the `alloc` feature.
+/// Heap-backed ring buffer. Arena lives in a `Box<[u8]>`.
+///
+/// Requires the `alloc` feature. See [`BPRB`] for usage.
 #[cfg(feature = "alloc")]
 pub type BoxedBPRB<T, const STATE_SIZE: usize, const MAX_ENCODED: usize> =
 	BPRB<T, alloc::boxed::Box<[u8]>, STATE_SIZE, MAX_ENCODED>;
 
-/// Works in `no_std` without `alloc`.
+/// Stack-backed ring buffer. Arena lives in a `[u8; N]` array.
+///
+/// Works in `no_std` without `alloc`. See [`BPRB`] for usage.
 pub type StackBPRB<T, const STATE_SIZE: usize, const MAX_ENCODED: usize, const ARENA_SIZE: usize> =
 	BPRB<T, [u8; ARENA_SIZE], STATE_SIZE, MAX_ENCODED>;
 

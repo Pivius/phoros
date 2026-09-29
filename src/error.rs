@@ -1,10 +1,26 @@
 use core::fmt;
 
+/// Errors that can occur during [`rollback_to`](crate::BPRB::rollback_to) and
+/// [`apply_delta`](crate::BPRB::apply_delta).
+///
+/// # Examples
+///
+/// ```
+/// use phoros::RollbackError;
+///
+/// let err = RollbackError::FrameEvicted;
+/// assert_eq!(err.to_string(), "frame evicted: anchor no longer in arena");
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum RollbackError {
+	/// The requested frame has been evicted from the arena.
 	FrameEvicted,
+	/// A slot in the delta chain is corrupted or has an unexpected frame number.
 	CorruptedChain,
+	/// The arena header is unreadable or invalid.
 	ArenaCorrupted,
+	/// An error occurred in the bitstream codec.
 	Codec(CodecError),
 }
 
@@ -22,10 +38,25 @@ impl fmt::Display for RollbackError {
 #[cfg(feature = "std")]
 impl std::error::Error for RollbackError {}
 
+/// Errors that can occur during buffer construction and
+/// [`snapshot`](crate::BPRB::snapshot).
+///
+/// # Examples
+///
+/// ```
+/// use phoros::{bprb, BufferError};
+///
+/// let err = bprb!(u64 => boxed(1)).unwrap_err();
+/// assert!(matches!(err, BufferError::ArenaFull));
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum BufferError {
+	/// The arena is too small to hold even one slot.
 	ArenaFull,
+	/// The state type `T` has drop logic, which is not supported.
 	InvalidState,
+	/// An error occurred in the bitstream codec.
 	Codec(CodecError),
 }
 
@@ -56,9 +87,22 @@ impl From<CodecError> for BufferError {
 	}
 }
 
+/// Errors in the bitstream encoder/decoder.
+///
+/// # Examples
+///
+/// ```
+/// use phoros::CodecError;
+///
+/// let err = CodecError::BitstreamOverflow;
+/// assert_eq!(err.to_string(), "bitstream overflow: writer buffer full");
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum CodecError {
+	/// The write buffer is full.
 	BitstreamOverflow,
+	/// The read buffer has been exhausted.
 	BitstreamUnderflow,
 }
 

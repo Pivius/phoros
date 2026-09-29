@@ -22,6 +22,7 @@
 //! |---------|---------|---------|
 //! | `std` | Yes | `BoxedBPRB`, `std::error::Error` impls |
 //! | `alloc` | Via `std` | `BoxedBPRB`, `bprb!()` boxed variant |
+//! | `serde` | No | `Serialize`/`Deserialize` for `SlotType`, `SlotHeader`, `AnchorEntry`, error types |
 //!
 //! Bare `no_std` (no features) gives `StackBPRB` and `bprb!()` stack variant only.
 
@@ -43,6 +44,7 @@ pub use buffer::BoxedBPRB;
 pub use buffer::StackBPRB;
 pub use buffer::{DEFAULT_ANCHOR_INTERVAL, DEFAULT_DELTA_THRESHOLD};
 pub use error::{BufferError, CodecError, RollbackError};
+pub use slot::SlotType;
 pub use storage::ArenaStorage;
 
 const _: () = assert!(
