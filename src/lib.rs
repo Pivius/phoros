@@ -35,10 +35,10 @@ pub mod index;
 pub mod slot;
 pub mod storage;
 
+pub use buffer::BPRB;
 #[cfg(feature = "alloc")]
 pub use buffer::BoxedBPRB;
 pub use buffer::StackBPRB;
-pub use buffer::BPRB;
 pub use buffer::{DEFAULT_ANCHOR_INTERVAL, DEFAULT_DELTA_THRESHOLD};
 pub use error::{BufferError, CodecError, RollbackError};
 pub use slot::SlotType;

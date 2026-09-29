@@ -1,6 +1,6 @@
 extern crate alloc;
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 
 #[derive(Clone, Copy)]
 #[allow(dead_code)]

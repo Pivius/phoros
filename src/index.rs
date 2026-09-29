@@ -129,22 +129,18 @@ impl AnchorIndex {
             }
         }
 
-        if lo == 0 {
-            None
-        } else {
-            self.entries[lo - 1]
-        }
+        if lo == 0 { None } else { self.entries[lo - 1] }
     }
 
     /// Drop all entries with `frame < min_frame`.
     pub fn evict_before(&mut self, min_frame: u64) {
         let mut write = 0;
         for read in 0..self.count {
-            if let Some(entry) = self.entries[read] {
-                if entry.frame >= min_frame {
-                    self.entries[write] = Some(entry);
-                    write += 1;
-                }
+            if let Some(entry) = self.entries[read]
+                && entry.frame >= min_frame
+            {
+                self.entries[write] = Some(entry);
+                write += 1;
             }
         }
         for i in write..self.count {

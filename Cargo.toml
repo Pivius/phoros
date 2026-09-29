@@ -1,7 +1,7 @@
 [package]
 name = "phoros"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 description = "Zero-allocation ring buffer with XOR delta encoding and state rollback"
 license = "MIT"
 repository = "https://github.com/Pivius/phoros"

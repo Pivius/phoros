@@ -5,7 +5,7 @@ use crate::{
     codec,
     error::{BufferError, RollbackError},
     index::AnchorIndex,
-    slot::{next_slot_offset, SlotHeader, SlotType, SLOT_HEADER_SIZE},
+    slot::{SLOT_HEADER_SIZE, SlotHeader, SlotType, next_slot_offset},
     storage::ArenaStorage,
 };
 
