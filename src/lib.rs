@@ -8,12 +8,9 @@
 //! ```
 //! use phoros::bprb;
 //!
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let mut buf = bprb!(u64 => boxed(1024))?;
-//! buf.snapshot(&42u64)?;
-//! assert_eq!(buf.rollback_to(0)?, 42u64);
-//! # Ok(())
-//! # }
+//! let mut buf = bprb!(u64 => stack(1024)).unwrap();
+//! buf.snapshot(&42u64).unwrap();
+//! assert_eq!(buf.rollback_to(0).unwrap(), 42u64);
 //! ```
 //!
 //! # Feature flags

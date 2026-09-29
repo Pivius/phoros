@@ -84,13 +84,10 @@ fn xor_into(dst: &mut [u8], src: &[u8]) {
 /// ```
 /// use phoros::bprb;
 ///
-/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// let mut buf = bprb!(u64 => boxed(1024))?;
-/// buf.snapshot(&1u64)?;
-/// buf.snapshot(&2u64)?;
-/// assert_eq!(buf.rollback_to(0)?, 1u64);
-/// # Ok(())
-/// # }
+/// let mut buf = bprb!(u64 => stack(1024)).unwrap();
+/// buf.snapshot(&1u64).unwrap();
+/// buf.snapshot(&2u64).unwrap();
+/// assert_eq!(buf.rollback_to(0).unwrap(), 1u64);
 /// ```
 #[derive(Debug)]
 pub struct BPRB<T, S: ArenaStorage, const STATE_SIZE: usize, const MAX_ENCODED: usize> {
@@ -595,19 +592,19 @@ pub type BoxedBPRB<T, const STATE_SIZE: usize, const MAX_ENCODED: usize> =
 pub type StackBPRB<T, const STATE_SIZE: usize, const MAX_ENCODED: usize, const ARENA_SIZE: usize> =
 	BPRB<T, [u8; ARENA_SIZE], STATE_SIZE, MAX_ENCODED>;
 
-/// Construct a [`BoxedBPRB`] with `STATE_SIZE` and `MAX_ENCODED` derived
+/// Construct a [`BPRB`] with `STATE_SIZE` and `MAX_ENCODED` derived
 /// automatically from the concrete type.
 ///
 /// # Examples
 ///
 /// ```
-/// let buf = phoros::bprb!(u64 => boxed(64 * 1024)).unwrap();
+/// let buf = phoros::bprb!(u64 => stack({64 * 1024})).unwrap();
 /// ```
 ///
 /// With custom anchor interval:
 ///
 /// ```
-/// let buf = phoros::bprb!(u64 => boxed(64 * 1024, 10)).unwrap();
+/// let buf = phoros::bprb!(u64 => stack({64 * 1024}, 10)).unwrap();
 /// ```
 #[macro_export]
 macro_rules! bprb {
@@ -643,7 +640,7 @@ macro_rules! bprb {
 	}};
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "alloc"))]
 mod tests {
 	use super::*;
 

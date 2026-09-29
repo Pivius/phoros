@@ -46,7 +46,7 @@ impl std::error::Error for RollbackError {}
 /// ```
 /// use phoros::{bprb, BufferError};
 ///
-/// let err = bprb!(u64 => boxed(1)).unwrap_err();
+/// let err = bprb!(u64 => stack(1)).unwrap_err();
 /// assert!(matches!(err, BufferError::ArenaFull));
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

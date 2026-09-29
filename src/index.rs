@@ -31,14 +31,11 @@ impl AnchorEntry {
 /// ```
 /// use phoros::BPRB;
 ///
-/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// let mut buf = BPRB::<u64, [u8; 4096], 8, 11>::new_stack(10)?;
-/// buf.snapshot(&1u64)?;
-/// buf.snapshot(&2u64)?;
-/// buf.snapshot(&3u64)?;
-/// assert_eq!(buf.rollback_to(2)?, 2u64);
-/// # Ok(())
-/// # }
+/// let mut buf = BPRB::<u64, [u8; 4096], 8, 11>::new_stack(10).unwrap();
+/// buf.snapshot(&1u64).unwrap();
+/// buf.snapshot(&2u64).unwrap();
+/// buf.snapshot(&3u64).unwrap();
+/// assert_eq!(buf.rollback_to(1).unwrap(), 2u64);
 /// ```
 #[derive(Debug)]
 pub struct AnchorIndex {
