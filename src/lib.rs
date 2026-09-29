@@ -25,6 +25,7 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
+#[cfg(feature = "alloc")]
 extern crate alloc;
 
 pub mod arena;
@@ -38,6 +39,8 @@ pub mod storage;
 pub use buffer::BPRB;
 #[cfg(feature = "alloc")]
 pub use buffer::BoxedBPRB;
+#[cfg(all(feature = "alloc", feature = "serde"))]
+pub use buffer::SavedState;
 pub use buffer::StackBPRB;
 pub use buffer::{DEFAULT_ANCHOR_INTERVAL, DEFAULT_DELTA_THRESHOLD};
 pub use error::{BufferError, CodecError, RollbackError};

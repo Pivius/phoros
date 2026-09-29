@@ -37,7 +37,8 @@ impl AnchorEntry {
 /// buf.snapshot(&3u64).unwrap();
 /// assert_eq!(buf.rollback_to(1).unwrap(), 2u64);
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AnchorIndex {
     entries: [Option<AnchorEntry>; MAX_ANCHORS],
     count: usize,
