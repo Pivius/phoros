@@ -11,7 +11,7 @@ pub struct DocState {
 }
 
 pub const DOC_STATE_SIZE: usize = core::mem::size_of::<DocState>();
-pub const DOC_MAX_ENCODED: usize = 10 * ((DOC_STATE_SIZE + 7) / 8) + 1;
+pub const DOC_MAX_ENCODED: usize = 10 * (DOC_STATE_SIZE + 7).div_ceil(8) + 1;
 
 #[cfg(feature = "alloc")]
 pub type DocBuf = BPRB<DocState, alloc::boxed::Box<[u8]>, DOC_STATE_SIZE, DOC_MAX_ENCODED>;

@@ -15,7 +15,7 @@ struct DocState {
 }
 
 const DOC_STATE_SIZE: usize = core::mem::size_of::<DocState>();
-const DOC_MAX_ENCODED: usize = 10 * ((DOC_STATE_SIZE + 7) / 8) + 1;
+const DOC_MAX_ENCODED: usize = 10 * (DOC_STATE_SIZE + 7).div_ceil(8) + 1;
 
 type DocBuf = phoros::BPRB<DocState, alloc::boxed::Box<[u8]>, DOC_STATE_SIZE, DOC_MAX_ENCODED>;
 

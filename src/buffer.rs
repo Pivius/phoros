@@ -122,7 +122,7 @@ where
     }
 
     fn from_storage(storage: S, anchor_interval: u64) -> Result<Self, BufferError> {
-        let _ = Self::_ENSURE_STATE_SIZE;
+        let () = Self::_ENSURE_STATE_SIZE;
         Self::validate_type()?;
 
         let min_slot_size = SLOT_HEADER_SIZE + STATE_SIZE;
@@ -655,7 +655,7 @@ mod tests {
     }
 
     const S_STATE_SIZE: usize = core::mem::size_of::<S>();
-    const S_MAX_ENCODED: usize = 10 * ((S_STATE_SIZE + 7) / 8) + 1;
+    const S_MAX_ENCODED: usize = 10 * (S_STATE_SIZE + 7).div_ceil(8) + 1;
 
     type SBoxed = BPRB<S, alloc::boxed::Box<[u8]>, S_STATE_SIZE, S_MAX_ENCODED>;
 

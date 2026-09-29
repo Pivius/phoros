@@ -17,6 +17,9 @@ pub trait ArenaStorage {
     /// Returns the number of bytes in the storage.
     fn len(&self) -> usize;
 
+	// Returns true if empty.
+	fn is_empty(&self) -> bool;
+
     /// Borrow the storage as an immutable byte slice.
     fn as_slice(&self) -> &[u8];
 
@@ -29,6 +32,10 @@ impl<const N: usize> ArenaStorage for [u8; N] {
     fn len(&self) -> usize {
         N
     }
+	#[inline]
+	fn is_empty(&self) -> bool {
+		self.len() == 0
+	}
     #[inline]
     fn as_slice(&self) -> &[u8] {
         self
@@ -44,6 +51,10 @@ impl ArenaStorage for [u8] {
     fn len(&self) -> usize {
         (*self).len()
     }
+	#[inline]
+	fn is_empty(&self) -> bool {
+		self.len() == 0
+	}
     #[inline]
     fn as_slice(&self) -> &[u8] {
         self
@@ -60,6 +71,10 @@ impl ArenaStorage for alloc::boxed::Box<[u8]> {
     fn len(&self) -> usize {
         (**self).len()
     }
+	#[inline]
+	fn is_empty(&self) -> bool {
+		self.len() == 0
+	}
     #[inline]
     fn as_slice(&self) -> &[u8] {
         self
