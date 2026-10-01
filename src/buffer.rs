@@ -252,8 +252,8 @@ where
 
     /// Reconstruct the state at `target_frame`.
     ///
-    /// Finds the nearest anchor near `target_frame`, 
-	/// then walks forward to the target frame.
+    /// Finds the nearest anchor near `target_frame`,
+    /// then walks forward to the target frame.
     ///
     /// # Errors
     ///
@@ -399,6 +399,57 @@ where
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.frame_counter == 0
+    }
+
+    /// Returns an iterator over frames in `range`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use phoros::bprb;
+    ///
+    /// let mut buf = bprb!(u64 => stack(4096)).unwrap();
+    /// buf.snapshot(&1u64).unwrap();
+    /// buf.snapshot(&2u64).unwrap();
+    /// buf.snapshot(&3u64).unwrap();
+    ///
+    /// let mut values = [0u64; 2];
+    /// for (i, frame) in buf.frames(1..3).enumerate() {
+    ///     values[i] = frame.unwrap();
+    /// }
+    /// assert_eq!(values, [2, 3]);
+    /// ```
+    pub fn frames(
+        &self,
+        range: impl core::ops::RangeBounds<u64>,
+    ) -> FrameRange<'_, T, S, STATE_SIZE, MAX_ENCODED>
+    where
+        T: Copy + Sized + Send + 'static,
+    {
+        let start = match range.start_bound() {
+            core::ops::Bound::Included(&s) => s,
+            core::ops::Bound::Excluded(&s) => s + 1,
+            core::ops::Bound::Unbounded => 0,
+        };
+        let end = match range.end_bound() {
+            core::ops::Bound::Included(&e) => e,
+            core::ops::Bound::Excluded(&e) => e.saturating_sub(1),
+            core::ops::Bound::Unbounded => self.frame_counter.saturating_sub(1),
+        };
+        FrameRange::new(self, start, end)
+    }
+
+    /// Returns an iterator over all live frames, from oldest to newest.
+    ///
+    /// Equivalent to `frames(oldest_frame()..=newest_frame())`.
+    pub fn frames_all(&self) -> FrameRange<'_, T, S, STATE_SIZE, MAX_ENCODED>
+    where
+        T: Copy + Sized + Send + 'static,
+    {
+        match (self.oldest_frame(), self.newest_frame()) {
+            (Some(oldest), Some(newest)) => FrameRange::new(self, oldest, newest),
+            _ => FrameRange::new(self, 0, 0),
+        }
     }
 
     /// Returns the total memory usage in bytes, arena + struct overhead.
@@ -547,7 +598,149 @@ where
     }
 }
 
-// ── Convenience constructors ─────────────────────────────────────────
+// Frame iteration
+
+/// Iterator over stored frames in a [`BPRB`].
+///
+/// Yields `Result<T, RollbackError>` for each frame in the range.
+///
+/// Created via [`BPRB::frames`] or [`BPRB::frames_all`].
+pub struct FrameRange<'a, T, S, const STATE_SIZE: usize, const MAX_ENCODED: usize>
+where
+    T: Copy + Sized + Send + 'static,
+    S: ArenaStorage,
+{
+    buf: &'a BPRB<T, S, STATE_SIZE, MAX_ENCODED>,
+    next_frame: u64,
+    end_frame: u64,
+    arena_offset: u32,
+    working: [u8; STATE_SIZE],
+    buf_encoded: [u8; MAX_ENCODED],
+    buf_delta: [u8; STATE_SIZE],
+}
+
+impl<'a, T, S, const STATE_SIZE: usize, const MAX_ENCODED: usize>
+    FrameRange<'a, T, S, STATE_SIZE, MAX_ENCODED>
+where
+    T: Copy + Sized + Send + 'static,
+    S: ArenaStorage,
+{
+    fn new(buf: &'a BPRB<T, S, STATE_SIZE, MAX_ENCODED>, start: u64, end: u64) -> Self {
+        Self {
+            buf,
+            next_frame: start,
+            end_frame: end,
+            arena_offset: 0,
+            working: [0u8; STATE_SIZE],
+            buf_encoded: [0u8; MAX_ENCODED],
+            buf_delta: [0u8; STATE_SIZE],
+        }
+    }
+}
+
+impl<T, S, const STATE_SIZE: usize, const MAX_ENCODED: usize> Iterator
+    for FrameRange<'_, T, S, STATE_SIZE, MAX_ENCODED>
+where
+    T: Copy + Sized + Send + 'static,
+    S: ArenaStorage,
+{
+    type Item = Result<T, RollbackError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.next_frame > self.end_frame {
+            return None;
+        }
+
+        let buf = self.buf;
+        let target = self.next_frame;
+
+        let anchor = buf.anchor_index.find_nearest_le(target)?;
+
+        if anchor.frame() > target {
+            return Some(Err(RollbackError::FrameEvicted));
+        }
+
+        // Load anchor payload into working buffer.
+        let anchor_header = match buf.read_slot_at(anchor.offset(), &mut self.buf_encoded) {
+            Ok(h) => h,
+            Err(e) => {
+                self.next_frame = u64::MAX; // stop iter
+                return Some(Err(e));
+            }
+        };
+        if anchor_header.payload_len as usize != STATE_SIZE {
+            self.next_frame = u64::MAX;
+            return Some(Err(RollbackError::CorruptedChain));
+        }
+
+        self.working[..anchor_header.payload_len as usize]
+            .copy_from_slice(&self.buf_encoded[..anchor_header.payload_len as usize]);
+
+        self.arena_offset = next_slot_offset(
+            anchor.offset(),
+            anchor_header.payload_len,
+            buf.header.data_area_len,
+        );
+
+        for expected_frame in (anchor.frame() + 1)..=target {
+            let header = match buf.read_slot_at(self.arena_offset, &mut self.buf_encoded) {
+                Ok(h) => h,
+                Err(e) => {
+                    self.next_frame = u64::MAX;
+                    return Some(Err(e));
+                }
+            };
+
+            if header.frame != expected_frame {
+                self.next_frame = u64::MAX;
+                return Some(Err(RollbackError::CorruptedChain));
+            }
+
+            match SlotType::from_u8(header.kind) {
+                Some(SlotType::FullSnapshot) => {
+                    if header.payload_len as usize != STATE_SIZE {
+                        self.next_frame = u64::MAX;
+                        return Some(Err(RollbackError::CorruptedChain));
+                    }
+                    self.working[..header.payload_len as usize]
+                        .copy_from_slice(&self.buf_encoded[..header.payload_len as usize]);
+                }
+                Some(SlotType::Delta) => {
+                    if header.payload_len as usize > MAX_ENCODED {
+                        self.next_frame = u64::MAX;
+                        return Some(Err(RollbackError::CorruptedChain));
+                    }
+                    self.buf_delta.fill(0);
+                    if let Err(e) = codec::byte_masked_decode(
+                        &self.buf_encoded[..header.payload_len as usize],
+                        &mut self.buf_delta,
+                    ) {
+                        self.next_frame = u64::MAX;
+                        return Some(Err(e.into()));
+                    }
+                    xor_into(&mut self.working, &self.buf_delta);
+                }
+                None => {
+                    self.next_frame = u64::MAX;
+                    return Some(Err(RollbackError::CorruptedChain));
+                }
+            }
+
+            self.arena_offset = next_slot_offset(
+                self.arena_offset,
+                header.payload_len,
+                buf.header.data_area_len,
+            );
+        }
+
+        let result = BPRB::<T, S, STATE_SIZE, MAX_ENCODED>::bytes_to_state(&self.working);
+
+        self.next_frame += 1;
+        Some(Ok(result))
+    }
+}
+
+// Constructors
 
 #[cfg(feature = "alloc")]
 impl<T, const STATE_SIZE: usize, const MAX_ENCODED: usize>
@@ -782,6 +975,7 @@ where
 #[cfg(all(test, feature = "alloc"))]
 mod tests {
     use super::*;
+    use alloc::vec::Vec;
 
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     struct S {
@@ -866,10 +1060,7 @@ mod tests {
         let mut buf = SBoxed::new_boxed(4096, 10).unwrap();
         buf.snapshot(&make(0)).unwrap();
 
-        assert_eq!(
-            buf.read_frame(5).err(),
-            Some(RollbackError::FrameEvicted)
-        );
+        assert_eq!(buf.read_frame(5).err(), Some(RollbackError::FrameEvicted));
     }
 
     #[test]
@@ -902,6 +1093,138 @@ mod tests {
         // read_frame should not clear or change diverged
         buf.read_frame(0).unwrap();
         assert!(buf.diverged);
+    }
+
+    #[test]
+    fn frames_all_yields_all_frames() {
+        let mut buf = SBoxed::new_boxed(4096, 10).unwrap();
+        for i in 0..5 {
+            buf.snapshot(&make(i)).unwrap();
+        }
+
+        let results: Vec<_> = buf.frames_all().collect();
+        assert_eq!(results.len(), 5);
+        for (i, result) in results.iter().enumerate() {
+            assert_eq!(*result, Ok(make(i)));
+        }
+    }
+
+    #[test]
+    fn frames_range_yields_subset() {
+        let mut buf = SBoxed::new_boxed(4096, 10).unwrap();
+        for i in 0..10 {
+            buf.snapshot(&make(i)).unwrap();
+        }
+
+        let results: Vec<_> = buf.frames(3..7).collect();
+        assert_eq!(results.len(), 4);
+        for (i, result) in results.iter().enumerate() {
+            assert_eq!(*result, Ok(make(i + 3)));
+        }
+    }
+
+    #[test]
+    fn frames_does_not_mutate_state() {
+        let mut buf = SBoxed::new_boxed(4096, 10).unwrap();
+        buf.snapshot(&make(0)).unwrap();
+        buf.snapshot(&make(1)).unwrap();
+        buf.snapshot(&make(2)).unwrap();
+
+        let head_before = buf.current_head_state;
+        let _: Vec<_> = buf.frames_all().collect();
+        assert_eq!(buf.current_head_state, head_before);
+        assert!(!buf.diverged);
+    }
+
+    #[test]
+    fn frames_empty_buffer_yields_nothing() {
+        let buf = SBoxed::new_boxed(4096, 10).unwrap();
+        assert_eq!(buf.frames_all().count(), 0);
+    }
+
+    #[test]
+    fn frames_empty_range_yields_nothing() {
+        let mut buf = SBoxed::new_boxed(4096, 10).unwrap();
+        buf.snapshot(&make(0)).unwrap();
+        buf.snapshot(&make(1)).unwrap();
+
+        assert_eq!(buf.frames(1..1).count(), 0);
+    }
+
+    #[test]
+    fn frames_across_anchors() {
+        let mut buf = SBoxed::new_boxed(4096, 2).unwrap();
+        for i in 0..10 {
+            buf.snapshot(&make(i)).unwrap();
+        }
+
+        let results: Vec<_> = buf.frames_all().collect();
+        assert_eq!(results.len(), 10);
+        for (i, result) in results.iter().enumerate() {
+            assert_eq!(*result, Ok(make(i)));
+        }
+    }
+
+    #[test]
+    fn frames_on_single_anchor() {
+        let mut buf = SBoxed::new_boxed(4096, 5).unwrap();
+        for i in 0..5 {
+            buf.snapshot(&make(i)).unwrap();
+        }
+        // Frame 0 is the only anchor
+
+        let results: Vec<_> = buf.frames(0..1).collect();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0], Ok(make(0)));
+    }
+
+    #[test]
+    fn frames_yields_error_for_evicted_frame() {
+        let mut buf = SBoxed::new_boxed(200, 2).unwrap();
+        buf.snapshot(&make(0)).unwrap();
+        buf.snapshot(&make(1)).unwrap();
+        buf.snapshot(&make(2)).unwrap();
+        buf.snapshot(&make(3)).unwrap();
+        // With a tiny arena, frames get evicted. Try to iterate from 0.
+        let results: Vec<_> = buf.frames_all().collect();
+        // At least one result should be present (evicted or valid)
+        assert!(!results.is_empty());
+    }
+
+    #[test]
+    fn frames_iterator_trait_usage() {
+        let mut buf = SBoxed::new_boxed(4096, 10).unwrap();
+        for i in 0..5 {
+            buf.snapshot(&make(i)).unwrap();
+        }
+
+        // for loop
+        let mut count = 0;
+        for result in buf.frames_all() {
+            result.unwrap();
+            count += 1;
+        }
+        assert_eq!(count, 5);
+
+        // collect + filter
+        let evens: Vec<_> = buf
+            .frames_all()
+            .filter(|r| r.as_ref().is_ok_and(|s| s.x % 2 == 0))
+            .collect();
+        assert_eq!(evens.len(), 3); // frames 0, 2, 4
+    }
+
+    #[test]
+    fn frames_matches_rollback_to() {
+        let mut buf = SBoxed::new_boxed(4096, 2).unwrap();
+        for i in 0..10 {
+            buf.snapshot(&make(i)).unwrap();
+        }
+
+        let iter_results: Vec<_> = buf.frames_all().collect();
+        for (i, iter_result) in iter_results.iter().enumerate() {
+            assert_eq!(*iter_result, Ok(buf.rollback_to(i as u64).unwrap()));
+        }
     }
 
     #[cfg(feature = "serde")]

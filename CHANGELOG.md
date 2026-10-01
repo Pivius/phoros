@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `BPRB::read_frame()` reconstruct a frame without mutating buffer state (`current_head_state`, `diverged`).
+- `FrameRange`, `Iterator<Item = Result<T, RollbackError>>` over stored frames.
 
 ## [0.1.2]
 
