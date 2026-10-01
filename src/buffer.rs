@@ -250,17 +250,19 @@ where
         Ok(())
     }
 
-    /// Reconstruct the state at `target_frame` by finding the nearest anchor
-    /// and walking the chain forward. Updates the internal head state.
+    /// Reconstruct the state at `target_frame`.
+    ///
+    /// Finds the nearest anchor near `target_frame`, 
+	/// then walks forward to the target frame.
     ///
     /// # Errors
     ///
-    /// - [`RollbackError::FrameEvicted`] if `target_frame` was evicted from the arena.
+    /// - [`RollbackError::FrameEvicted`] if `target_frame` is out of range
     /// - [`RollbackError::CorruptedChain`] if a slot header is invalid, a
     ///   payload length is inconsistent, or the delta chain is broken.
     /// - [`RollbackError::ArenaCorrupted`] if the arena header is unreadable.
     /// - [`RollbackError::Codec`] if the internal bitstream decoder overflows.
-    pub fn rollback_to(&mut self, target_frame: u64) -> Result<T, RollbackError> {
+    pub fn read_frame(&self, target_frame: u64) -> Result<T, RollbackError> {
         if target_frame > self.frame_counter.saturating_sub(1) {
             return Err(RollbackError::FrameEvicted);
         }
@@ -321,9 +323,17 @@ where
             offset = next_slot_offset(offset, header.payload_len, self.header.data_area_len);
         }
 
-        // SAFETY: working was reconstructed from valid full-snapshot bytes
-        // and correctly applied deltas, so it represents a valid T.
-        let result = Self::bytes_to_state(&working);
+        Ok(Self::bytes_to_state(&working))
+    }
+
+    /// Reconstruct the state at `target_frame` by finding the nearest anchor
+    /// and walking the chain forward. Updates the internal head state.
+    ///
+    /// # Errors
+    ///
+    /// See [`BPRB::read_frame`]
+    pub fn rollback_to(&mut self, target_frame: u64) -> Result<T, RollbackError> {
+        let result = self.read_frame(target_frame)?;
 
         self.current_head_state = Some(result);
         if target_frame != self.frame_counter.saturating_sub(1) {
@@ -813,6 +823,85 @@ mod tests {
         buf.snapshot(&s1).unwrap();
 
         assert_eq!(buf.rollback_to(1).unwrap(), s1);
+    }
+
+    #[test]
+    fn read_frame_matches_rollback_to() {
+        let mut buf = SBoxed::new_boxed(4096, 2).unwrap();
+        for i in 0..10 {
+            buf.snapshot(&make(i)).unwrap();
+        }
+
+        for i in 0..10u64 {
+            assert_eq!(buf.read_frame(i).unwrap(), buf.rollback_to(i).unwrap());
+        }
+    }
+
+    #[test]
+    fn read_frame_does_not_set_diverged() {
+        let mut buf = SBoxed::new_boxed(4096, 10).unwrap();
+        buf.snapshot(&make(0)).unwrap();
+        buf.snapshot(&make(1)).unwrap();
+        buf.snapshot(&make(2)).unwrap();
+
+        assert!(!buf.diverged);
+        buf.read_frame(0).unwrap();
+        assert!(!buf.diverged);
+    }
+
+    #[test]
+    fn read_frame_does_not_change_head_state() {
+        let mut buf = SBoxed::new_boxed(4096, 10).unwrap();
+        buf.snapshot(&make(0)).unwrap();
+        buf.snapshot(&make(1)).unwrap();
+        buf.snapshot(&make(2)).unwrap();
+
+        let head_before = buf.current_head_state;
+        buf.read_frame(0).unwrap();
+        assert_eq!(buf.current_head_state, head_before);
+    }
+
+    #[test]
+    fn read_frame_out_of_range() {
+        let mut buf = SBoxed::new_boxed(4096, 10).unwrap();
+        buf.snapshot(&make(0)).unwrap();
+
+        assert_eq!(
+            buf.read_frame(5).err(),
+            Some(RollbackError::FrameEvicted)
+        );
+    }
+
+    #[test]
+    fn read_frame_empty_buffer() {
+        let buf = SBoxed::new_boxed(4096, 10).unwrap();
+        assert_eq!(buf.read_frame(0).err(), Some(RollbackError::FrameEvicted));
+    }
+
+    #[test]
+    fn read_frame_on_anchor() {
+        let mut buf = SBoxed::new_boxed(4096, 2).unwrap();
+        buf.snapshot(&make(0)).unwrap();
+        buf.snapshot(&make(1)).unwrap();
+        buf.snapshot(&make(2)).unwrap();
+        // Frame 2 is an anchor (2 % 2 == 0)
+
+        assert_eq!(buf.read_frame(2).unwrap(), make(2));
+    }
+
+    #[test]
+    fn read_frame_preserves_rollback_divergence() {
+        let mut buf = SBoxed::new_boxed(4096, 10).unwrap();
+        buf.snapshot(&make(0)).unwrap();
+        buf.snapshot(&make(1)).unwrap();
+
+        // Rollback sets diverged = true
+        buf.rollback_to(0).unwrap();
+        assert!(buf.diverged);
+
+        // read_frame should not clear or change diverged
+        buf.read_frame(0).unwrap();
+        assert!(buf.diverged);
     }
 
     #[cfg(feature = "serde")]
