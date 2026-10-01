@@ -19,7 +19,7 @@ pub const SLOT_TYPE_DELTA: u8 = 0x02;
 pub enum SlotType {
     /// A complete state snapshot.
     FullSnapshot = SLOT_TYPE_FULL_SNAPSHOT,
-    /// A compressed XOR delta from the previous frame.
+    /// A XOR delta from the previous entry.
     Delta = SLOT_TYPE_DELTA,
 }
 
@@ -54,7 +54,7 @@ impl SlotType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SlotHeader {
-    pub frame: u64,
+    pub entry: u64,
     pub payload_len: u16,
     pub checksum: u16,
     pub kind: u8,
@@ -71,7 +71,7 @@ impl SlotHeader {
     #[inline]
     pub fn to_bytes(&self) -> [u8; SLOT_HEADER_SIZE] {
         let mut b = [0u8; SLOT_HEADER_SIZE];
-        b[0..8].copy_from_slice(&self.frame.to_le_bytes());
+        b[0..8].copy_from_slice(&self.entry.to_le_bytes());
         b[8..10].copy_from_slice(&self.payload_len.to_le_bytes());
         b[10..12].copy_from_slice(&self.checksum.to_le_bytes());
         b[12] = self.kind;
@@ -89,7 +89,7 @@ impl SlotHeader {
         SlotType::from_u8(kind)?;
 
         Some(Self {
-            frame: u64::from_le_bytes(bytes[0..8].try_into().unwrap()),
+            entry: u64::from_le_bytes(bytes[0..8].try_into().unwrap()),
             payload_len: u16::from_le_bytes(bytes[8..10].try_into().unwrap()),
             checksum: u16::from_le_bytes(bytes[10..12].try_into().unwrap()),
             kind,
@@ -115,7 +115,7 @@ mod tests {
         assert_eq!(core::mem::align_of::<SlotHeader>(), 8);
 
         let h = SlotHeader {
-            frame: 0x0102030405060708,
+            entry: 0x0102030405060708,
             payload_len: 0x090A,
             checksum: 0x0B0C,
             kind: 0x0D,
@@ -123,7 +123,7 @@ mod tests {
         };
         let b = h.to_bytes();
 
-        assert_eq!(b[0..8], h.frame.to_le_bytes());
+        assert_eq!(b[0..8], h.entry.to_le_bytes());
         assert_eq!(b[8..10], h.payload_len.to_le_bytes());
         assert_eq!(b[10..12], h.checksum.to_le_bytes());
         assert_eq!(b[12], 0x0D);
@@ -133,7 +133,7 @@ mod tests {
     #[test]
     fn roundtrip() {
         let h = SlotHeader {
-            frame: 12345,
+            entry: 12345,
             payload_len: 42,
             checksum: 0xABCD,
             kind: SLOT_TYPE_FULL_SNAPSHOT,
@@ -141,7 +141,7 @@ mod tests {
         };
         let b = h.to_bytes();
         let h2 = SlotHeader::from_bytes(&b).unwrap();
-        assert_eq!(h.frame, h2.frame);
+        assert_eq!(h.entry, h2.entry);
         assert_eq!(h.payload_len, h2.payload_len);
         assert_eq!(h.checksum, h2.checksum);
         assert_eq!(h.kind, h2.kind);

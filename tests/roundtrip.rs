@@ -15,26 +15,26 @@ fn single_snapshot_roundtrip() {
 #[test]
 fn many_snapshots_roundtrip_all() {
     let mut b = buf(60, 128 * 1024);
-    let frames: Vec<_> = (0..50).map(make_state).collect();
-    for s in &frames {
+    let entries: Vec<_> = (0..50).map(make_state).collect();
+    for s in &entries {
         b.snapshot(s).unwrap();
     }
-    for (i, expected) in frames.iter().enumerate() {
-        assert_eq!(b.rollback_to(i as u64).unwrap(), *expected, "frame {i}");
+    for (i, expected) in entries.iter().enumerate() {
+        assert_eq!(b.rollback_to(i as u64).unwrap(), *expected, "entry {i}");
     }
 }
 
 #[test]
 fn rollback_across_anchor_boundary() {
     let mut b = buf(10, 128 * 1024);
-    let frames: Vec<_> = (0..35).map(make_state).collect();
-    for s in &frames {
+    let entries: Vec<_> = (0..35).map(make_state).collect();
+    for s in &entries {
         b.snapshot(s).unwrap();
     }
     for target in [9, 10, 11, 19, 20, 21, 34] {
         assert_eq!(
             b.rollback_to(target).unwrap(),
-            frames[target as usize],
+            entries[target as usize],
             "target {target}"
         );
     }
@@ -52,7 +52,7 @@ fn interleaved_rollback_then_snapshot_keeps_chain_valid() {
 
     assert_eq!(b.rollback_to(1).unwrap(), a); // rewind
 
-    b.snapshot(&next).unwrap(); // recorded against current head (frame 1's state)
+    b.snapshot(&next).unwrap(); // recorded against current head (entry 1's state)
     assert_eq!(b.rollback_to(1).unwrap(), a);
     assert_eq!(b.rollback_to(3).unwrap(), next);
 }
@@ -60,12 +60,12 @@ fn interleaved_rollback_then_snapshot_keeps_chain_valid() {
 #[test]
 fn full_snapshot_midchain_is_replaced_not_xored() {
     let mut b = buf(1000, 128 * 1024); // huge interval: anchors only via threshold
-    let frames: Vec<_> = (0..20).map(make_churned_state).collect();
-    for s in &frames {
+    let entries: Vec<_> = (0..20).map(make_churned_state).collect();
+    for s in &entries {
         b.snapshot(s).unwrap();
     }
-    for (i, expected) in frames.iter().enumerate() {
-        assert_eq!(b.rollback_to(i as u64).unwrap(), *expected, "frame {i}");
+    for (i, expected) in entries.iter().enumerate() {
+        assert_eq!(b.rollback_to(i as u64).unwrap(), *expected, "entry {i}");
     }
 }
 

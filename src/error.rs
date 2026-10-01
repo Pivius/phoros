@@ -8,15 +8,15 @@ use core::fmt;
 /// ```
 /// use phoros::RollbackError;
 ///
-/// let err = RollbackError::FrameEvicted;
-/// assert_eq!(err.to_string(), "frame evicted: anchor no longer in arena");
+/// let err = RollbackError::EntryEvicted;
+/// assert_eq!(err.to_string(), "entry evicted: anchor no longer in arena");
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum RollbackError {
-    /// The requested frame has been evicted from the arena.
-    FrameEvicted,
-    /// A slot in the delta chain is corrupted or has an unexpected frame number.
+    /// The requested entry has been evicted from the arena.
+    EntryEvicted,
+    /// A slot in the delta chain is corrupted or has an unexpected index.
     CorruptedChain,
     /// The arena header is unreadable or invalid.
     ArenaCorrupted,
@@ -27,7 +27,7 @@ pub enum RollbackError {
 impl fmt::Display for RollbackError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            RollbackError::FrameEvicted => f.write_str("frame evicted: anchor no longer in arena"),
+            RollbackError::EntryEvicted => f.write_str("entry evicted: anchor no longer in arena"),
             RollbackError::CorruptedChain => f.write_str("corrupted chain: slot sequence broken"),
             RollbackError::ArenaCorrupted => f.write_str("arena corrupted: header inconsistency"),
             RollbackError::Codec(e) => write!(f, "codec error: {e}"),

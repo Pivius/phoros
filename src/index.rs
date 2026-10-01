@@ -1,31 +1,25 @@
 pub const MAX_ANCHORS: usize = 32;
 
-/// An anchor entry mapping a frame number to an arena byte offset.
+/// An anchor entry mapping an entry to a offset.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AnchorEntry {
-    frame: u64,
+    entry: u64,
     offset: u32,
 }
 
 impl AnchorEntry {
-    /// The frame number of this anchor.
     #[inline]
-    pub fn frame(self) -> u64 {
-        self.frame
+    pub fn entry(self) -> u64 {
+        self.entry
     }
 
-    /// The byte offset of this anchor within the arena.
     #[inline]
     pub fn offset(self) -> u32 {
         self.offset
     }
 }
 
-/// Fixed-capacity sorted index mapping frame numbers to arena byte offsets.
-///
-/// O(log n) lookup of the nearest anchor for rollback reconstruction.
-///
 /// # Examples
 ///
 /// ```
@@ -67,19 +61,22 @@ impl AnchorIndex {
         }
     }
 
-    /// Insert an anchor, maintaining sorted order by frame.
+    /// Insert an anchor.
     ///
     /// Returns `false` if the index is full.
-    pub fn insert(&mut self, frame: u64, offset: u32) -> bool {
+    pub fn insert(&mut self, entry_num: u64, offset: u32) -> bool {
         if self.count >= MAX_ANCHORS {
             return false;
         }
 
-        let entry = AnchorEntry { frame, offset };
+        let entry = AnchorEntry {
+            entry: entry_num,
+            offset,
+        };
 
         let pos = self.entries[..self.count]
             .iter()
-            .position(|e| e.is_some_and(|e| e.frame > frame))
+            .position(|e| e.is_some_and(|e| e.entry > entry_num))
             .unwrap_or(self.count);
 
         for i in (pos..self.count).rev() {
@@ -109,9 +106,9 @@ impl AnchorIndex {
         }
     }
 
-    /// Binary search for the nearest anchor with `frame <= target_frame`.
+    /// Binary search for the nearest anchor with `entry <= target_entry`.
     #[inline]
-    pub fn find_nearest_le(&self, target_frame: u64) -> Option<AnchorEntry> {
+    pub fn find_nearest_le(&self, target_entry: u64) -> Option<AnchorEntry> {
         if self.count == 0 {
             return None;
         }
@@ -123,7 +120,7 @@ impl AnchorIndex {
             let mid = lo + (hi - lo) / 2;
             let entry = self.entries[mid].unwrap();
 
-            if entry.frame <= target_frame {
+            if entry.entry <= target_entry {
                 lo = mid + 1;
             } else {
                 hi = mid;
@@ -133,12 +130,12 @@ impl AnchorIndex {
         if lo == 0 { None } else { self.entries[lo - 1] }
     }
 
-    /// Drop all entries with `frame < min_frame`.
-    pub fn evict_before(&mut self, min_frame: u64) {
+    /// Drop all entries with `entry < min_entry`.
+    pub fn evict_before(&mut self, min_entry: u64) {
         let mut write = 0;
         for read in 0..self.count {
             if let Some(entry) = self.entries[read]
-                && entry.frame >= min_frame
+                && entry.entry >= min_entry
             {
                 self.entries[write] = Some(entry);
                 write += 1;
@@ -178,12 +175,12 @@ mod tests {
         index.insert(60, 1000);
         index.insert(120, 2000);
 
-        assert_eq!(index.find_nearest_le(0).unwrap().frame, 0);
-        assert_eq!(index.find_nearest_le(30).unwrap().frame, 0);
-        assert_eq!(index.find_nearest_le(60).unwrap().frame, 60);
-        assert_eq!(index.find_nearest_le(90).unwrap().frame, 60);
-        assert_eq!(index.find_nearest_le(120).unwrap().frame, 120);
-        assert_eq!(index.find_nearest_le(200).unwrap().frame, 120);
+        assert_eq!(index.find_nearest_le(0).unwrap().entry, 0);
+        assert_eq!(index.find_nearest_le(30).unwrap().entry, 0);
+        assert_eq!(index.find_nearest_le(60).unwrap().entry, 60);
+        assert_eq!(index.find_nearest_le(90).unwrap().entry, 60);
+        assert_eq!(index.find_nearest_le(120).unwrap().entry, 120);
+        assert_eq!(index.find_nearest_le(200).unwrap().entry, 120);
     }
 
     #[test]
@@ -208,7 +205,7 @@ mod tests {
         assert!(index.remove_by_offset(0));
         assert_eq!(index.len(), 1);
         assert!(index.find_nearest_le(0).is_none());
-        assert_eq!(index.find_nearest_le(60).unwrap().frame, 60);
+        assert_eq!(index.find_nearest_le(60).unwrap().entry, 60);
     }
 
     #[test]
@@ -223,7 +220,7 @@ mod tests {
 
         assert_eq!(index.len(), 3);
         assert!(index.find_nearest_le(0).is_none());
-        assert_eq!(index.find_nearest_le(60).unwrap().frame, 60);
-        assert_eq!(index.find_nearest_le(180).unwrap().frame, 180);
+        assert_eq!(index.find_nearest_le(60).unwrap().entry, 60);
+        assert_eq!(index.find_nearest_le(180).unwrap().entry, 180);
     }
 }

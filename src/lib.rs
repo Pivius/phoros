@@ -39,7 +39,7 @@ pub mod storage;
 pub use buffer::BPRB;
 #[cfg(feature = "alloc")]
 pub use buffer::BoxedBPRB;
-pub use buffer::FrameRange;
+pub use buffer::EntryRange;
 #[cfg(all(feature = "alloc", feature = "serde"))]
 pub use buffer::SavedState;
 pub use buffer::StackBPRB;

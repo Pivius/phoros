@@ -9,8 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `BPRB::read_frame()` reconstruct a frame without mutating buffer state (`current_head_state`, `diverged`).
-- `FrameRange`, `Iterator<Item = Result<T, RollbackError>>` over stored frames.
+- `BPRB::read_entry()` reconstruct an entry without mutating buffer state (`current_head_state`, `diverged`).
+- `EntryRange`, `Iterator<Item = Result<T, RollbackError>>` over stored entries.
+
+### Changed
+
+- Refactor `buffer.rs` into multiple files.
+- Rename "frames" to "entries" as it's more descriptive to what it is.
 
 ## [0.1.2]
 
@@ -20,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `BPRB::save()` and `BPRB::load()` for persistent arena state (requires `alloc` + `serde` features).
 - `SavedState` struct for serializing/deserializing the full buffer state without requiring `T: Serialize`.
 - `AnchorIndex` derives `Clone` and supports `Serialize`/`Deserialize` under the `serde` feature.
+
 ## [0.1.1]
 
 ### Changed
