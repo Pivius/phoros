@@ -29,7 +29,7 @@ impl AnchorEntry {
 /// buf.snapshot(&1u64).unwrap();
 /// buf.snapshot(&2u64).unwrap();
 /// buf.snapshot(&3u64).unwrap();
-/// assert_eq!(buf.rollback_to(1).unwrap(), 2u64);
+/// assert_eq!(buf.rollback(1).unwrap(), 2u64);
 /// ```
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -108,7 +108,7 @@ impl AnchorIndex {
 
     /// Binary search for the nearest anchor with `entry <= target_entry`.
     #[inline]
-    pub fn find_nearest_le(&self, target_entry: u64) -> Option<AnchorEntry> {
+    pub fn nearest_le(&self, target_entry: u64) -> Option<AnchorEntry> {
         if self.count == 0 {
             return None;
         }
@@ -175,25 +175,25 @@ mod tests {
         index.insert(60, 1000);
         index.insert(120, 2000);
 
-        assert_eq!(index.find_nearest_le(0).unwrap().entry, 0);
-        assert_eq!(index.find_nearest_le(30).unwrap().entry, 0);
-        assert_eq!(index.find_nearest_le(60).unwrap().entry, 60);
-        assert_eq!(index.find_nearest_le(90).unwrap().entry, 60);
-        assert_eq!(index.find_nearest_le(120).unwrap().entry, 120);
-        assert_eq!(index.find_nearest_le(200).unwrap().entry, 120);
+        assert_eq!(index.nearest_le(0).unwrap().entry, 0);
+        assert_eq!(index.nearest_le(30).unwrap().entry, 0);
+        assert_eq!(index.nearest_le(60).unwrap().entry, 60);
+        assert_eq!(index.nearest_le(90).unwrap().entry, 60);
+        assert_eq!(index.nearest_le(120).unwrap().entry, 120);
+        assert_eq!(index.nearest_le(200).unwrap().entry, 120);
     }
 
     #[test]
     fn find_nearest_empty() {
         let index = AnchorIndex::new();
-        assert!(index.find_nearest_le(0).is_none());
+        assert!(index.nearest_le(0).is_none());
     }
 
     #[test]
     fn find_nearest_before_first() {
         let mut index = AnchorIndex::new();
         index.insert(60, 0);
-        assert!(index.find_nearest_le(30).is_none());
+        assert!(index.nearest_le(30).is_none());
     }
 
     #[test]
@@ -204,8 +204,8 @@ mod tests {
 
         assert!(index.remove_by_offset(0));
         assert_eq!(index.len(), 1);
-        assert!(index.find_nearest_le(0).is_none());
-        assert_eq!(index.find_nearest_le(60).unwrap().entry, 60);
+        assert!(index.nearest_le(0).is_none());
+        assert_eq!(index.nearest_le(60).unwrap().entry, 60);
     }
 
     #[test]
@@ -219,8 +219,8 @@ mod tests {
         index.evict_before(60);
 
         assert_eq!(index.len(), 3);
-        assert!(index.find_nearest_le(0).is_none());
-        assert_eq!(index.find_nearest_le(60).unwrap().entry, 60);
-        assert_eq!(index.find_nearest_le(180).unwrap().entry, 180);
+        assert!(index.nearest_le(0).is_none());
+        assert_eq!(index.nearest_le(60).unwrap().entry, 60);
+        assert_eq!(index.nearest_le(180).unwrap().entry, 180);
     }
 }

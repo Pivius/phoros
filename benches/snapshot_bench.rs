@@ -63,8 +63,8 @@ fn bench_snapshot(c: &mut Criterion) {
             for i in 0..60 {
                 buf.snapshot(&make_doc_state(i)).unwrap();
             }
-            buf.rollback_to(0).unwrap();
-            buf.rollback_to(59).unwrap();
+            buf.rollback(0).unwrap();
+            buf.rollback(59).unwrap();
         });
     });
 

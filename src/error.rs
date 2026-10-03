@@ -1,6 +1,6 @@
 use core::fmt;
 
-/// Errors that can occur during [`rollback_to`](crate::BPRB::rollback_to) and
+/// Errors that can occur during [`rollback`](crate::BPRB::rollback) and
 /// [`apply_delta`](crate::BPRB::apply_delta).
 ///
 /// # Examples

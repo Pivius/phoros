@@ -73,7 +73,7 @@ where
     /// buf.snapshot(&42u64).unwrap();
     /// let saved = buf.save();
     /// let mut restored = phoros::BoxedBPRB::<u64, 8, 11>::load(saved).unwrap();
-    /// assert_eq!(restored.rollback_to(0).unwrap(), 42u64);
+    /// assert_eq!(restored.rollback(0).unwrap(), 42u64);
     /// ```
     pub fn load(saved: SavedState) -> Result<Self, BufferError> {
         let head_state = saved.head_state.map(|bytes| {
@@ -157,10 +157,10 @@ mod save_load_tests {
         let saved = buf.save();
         let mut restored = SBoxed::load(saved).unwrap();
 
-        assert_eq!(restored.rollback_to(0).unwrap(), make(0));
-        assert_eq!(restored.rollback_to(1).unwrap(), make(1));
-        assert_eq!(restored.rollback_to(2).unwrap(), make(2));
-        assert_eq!(restored.current_entry(), 3);
+        assert_eq!(restored.rollback(0).unwrap(), make(0));
+        assert_eq!(restored.rollback(1).unwrap(), make(1));
+        assert_eq!(restored.rollback(2).unwrap(), make(2));
+        assert_eq!(restored.count(), 3);
     }
 
     #[test]
@@ -170,7 +170,7 @@ mod save_load_tests {
         let restored = SBoxed::load(saved).unwrap();
 
         assert!(restored.is_empty());
-        assert_eq!(restored.current_entry(), 0);
+        assert_eq!(restored.count(), 0);
     }
 
     #[test]
@@ -193,7 +193,7 @@ mod save_load_tests {
         buf.snapshot(&make(0)).unwrap();
         buf.snapshot(&make(1)).unwrap();
         // Rollback to entry 0, creating divergence
-        buf.rollback_to(0).unwrap();
+        buf.rollback(0).unwrap();
 
         let saved = buf.save();
         let restored = SBoxed::load(saved).unwrap();
@@ -212,7 +212,7 @@ mod save_load_tests {
         let mut restored = SBoxed::load(saved).unwrap();
 
         for i in 0..10u64 {
-            assert_eq!(restored.rollback_to(i).unwrap(), make(i as usize));
+            assert_eq!(restored.rollback(i).unwrap(), make(i as usize));
         }
     }
 
@@ -226,6 +226,6 @@ mod save_load_tests {
         let deserialized: SavedState = serde_json::from_str(&json).unwrap();
         let mut restored = SBoxed::load(deserialized).unwrap();
 
-        assert_eq!(restored.rollback_to(0).unwrap(), make(42));
+        assert_eq!(restored.rollback(0).unwrap(), make(42));
     }
 }

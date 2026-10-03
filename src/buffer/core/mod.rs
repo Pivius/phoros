@@ -91,7 +91,7 @@ fn xor_into(dst: &mut [u8], src: &[u8]) {
 /// let mut buf = bprb!(u64 => stack(1024)).unwrap();
 /// buf.snapshot(&1u64).unwrap();
 /// buf.snapshot(&2u64).unwrap();
-/// assert_eq!(buf.rollback_to(0).unwrap(), 1u64);
+/// assert_eq!(buf.rollback(0).unwrap(), 1u64);
 /// ```
 #[derive(Debug)]
 pub struct BPRB<T, S: ArenaStorage, const STATE_SIZE: usize, const MAX_ENCODED: usize> {
@@ -264,14 +264,14 @@ where
     ///   payload length is inconsistent, or the delta chain is broken.
     /// - [`RollbackError::ArenaCorrupted`] if the arena header is unreadable.
     /// - [`RollbackError::Codec`] if the internal bitstream decoder overflows.
-    pub fn read_entry(&self, target_entry: u64) -> Result<T, RollbackError> {
+    pub fn get(&self, target_entry: u64) -> Result<T, RollbackError> {
         if target_entry > self.entry_counter.saturating_sub(1) {
             return Err(RollbackError::EntryEvicted);
         }
 
         let anchor = self
             .anchor_index
-            .find_nearest_le(target_entry)
+            .nearest_le(target_entry)
             .ok_or(RollbackError::EntryEvicted)?;
 
         let mut buf_encoded = [0u8; MAX_ENCODED];
@@ -328,10 +328,10 @@ where
         Ok(Self::bytes_to_state(&working))
     }
 
-    /// Reconstruct the state at `target_entry` by [`read_entry`](Self::read_entry).
+    /// Reconstruct the state at `target_entry` by [`get`](Self::get).
     /// setting the head to the entry position.
-    pub fn rollback_to(&mut self, target_entry: u64) -> Result<T, RollbackError> {
-        let result = self.read_entry(target_entry)?;
+    pub fn rollback(&mut self, target_entry: u64) -> Result<T, RollbackError> {
+        let result = self.get(target_entry)?;
 
         self.current_head_state = Some(result);
         if target_entry != self.entry_counter.saturating_sub(1) {
@@ -347,14 +347,14 @@ where
     /// # Errors
     ///
     /// - [`RollbackError::CorruptedChain`] if `delta.len() != STATE_SIZE` or
-    ///   if the underlying `rollback_to` fails.
-    /// - Other variants as documented on [`rollback_to`](Self::rollback_to).
+    ///   if the underlying `rollback` fails.
+    /// - Other variants as documented on [`rollback`](Self::rollback).
     pub fn apply_delta(&mut self, entry_idx: u64, delta: &[u8]) -> Result<T, RollbackError> {
         if delta.len() != STATE_SIZE {
             return Err(RollbackError::CorruptedChain);
         }
 
-        let mut state = self.rollback_to(entry_idx)?;
+        let mut state = self.rollback(entry_idx)?;
 
         let state_bytes = Self::state_as_bytes_mut(&mut state);
         xor_into(state_bytes, delta);
@@ -367,12 +367,12 @@ where
 
     /// Returns the current number of entries.
     #[inline]
-    pub fn current_entry(&self) -> u64 {
+    pub fn count(&self) -> u64 {
         self.entry_counter
     }
 
     /// Returns the index of the oldest slot, or `None` if empty.
-    pub fn oldest_entry(&self) -> Option<u64> {
+    pub fn start(&self) -> Option<u64> {
         if self.entry_counter == 0 || self.header.live_slot_count == 0 {
             return None;
         }
@@ -380,8 +380,8 @@ where
     }
 
     /// Returns the index of the newest slot, or `None` if empty.
-    pub fn newest_entry(&self) -> Option<u64> {
-        if self.entry_counter == 0 {
+    pub fn end(&self) -> Option<u64> {
+        if self.entry_counter == 0 || self.header.live_slot_count == 0 {
             return None;
         }
         Some(self.entry_counter - 1)
@@ -393,10 +393,10 @@ where
         self.header.live_slot_count as usize
     }
 
-    /// Returns `true` if no entries have been recorded.
+    /// Returns `true` if no entries are currently live.
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.entry_counter == 0
+        self.len() == 0
     }
 
     /// Returns the total memory usage in bytes, arena + struct overhead.
@@ -574,7 +574,7 @@ mod tests {
         buf.storage_mut()[SLOT_HEADER_SIZE + 1] ^= 0xFF;
 
         assert_eq!(
-            buf.rollback_to(0).err(),
+            buf.rollback(0).err(),
             Some(RollbackError::CorruptedChain)
         );
     }
@@ -587,82 +587,82 @@ mod tests {
         buf.snapshot(&s0).unwrap();
         buf.snapshot(&s1).unwrap();
 
-        assert_eq!(buf.rollback_to(1).unwrap(), s1);
+        assert_eq!(buf.rollback(1).unwrap(), s1);
     }
 
     #[test]
-    fn read_entry_matches_rollback_to() {
+    fn get_matches_rollback() {
         let mut buf = SBoxed::new_boxed(4096, 2).unwrap();
         for i in 0..10 {
             buf.snapshot(&make(i)).unwrap();
         }
 
         for i in 0..10u64 {
-            assert_eq!(buf.read_entry(i).unwrap(), buf.rollback_to(i).unwrap());
+            assert_eq!(buf.get(i).unwrap(), buf.rollback(i).unwrap());
         }
     }
 
     #[test]
-    fn read_entry_does_not_set_diverged() {
+    fn get_does_not_set_diverged() {
         let mut buf = SBoxed::new_boxed(4096, 10).unwrap();
         buf.snapshot(&make(0)).unwrap();
         buf.snapshot(&make(1)).unwrap();
         buf.snapshot(&make(2)).unwrap();
 
         assert!(!buf.diverged);
-        buf.read_entry(0).unwrap();
+        buf.get(0).unwrap();
         assert!(!buf.diverged);
     }
 
     #[test]
-    fn read_entry_does_not_change_head_state() {
+    fn get_does_not_change_head_state() {
         let mut buf = SBoxed::new_boxed(4096, 10).unwrap();
         buf.snapshot(&make(0)).unwrap();
         buf.snapshot(&make(1)).unwrap();
         buf.snapshot(&make(2)).unwrap();
 
         let head_before = buf.current_head_state;
-        buf.read_entry(0).unwrap();
+        buf.get(0).unwrap();
         assert_eq!(buf.current_head_state, head_before);
     }
 
     #[test]
-    fn read_entry_out_of_range() {
+    fn get_out_of_range() {
         let mut buf = SBoxed::new_boxed(4096, 10).unwrap();
         buf.snapshot(&make(0)).unwrap();
 
-        assert_eq!(buf.read_entry(5).err(), Some(RollbackError::EntryEvicted));
+        assert_eq!(buf.get(5).err(), Some(RollbackError::EntryEvicted));
     }
 
     #[test]
-    fn read_entry_empty_buffer() {
+    fn get_empty_buffer() {
         let buf = SBoxed::new_boxed(4096, 10).unwrap();
-        assert_eq!(buf.read_entry(0).err(), Some(RollbackError::EntryEvicted));
+        assert_eq!(buf.get(0).err(), Some(RollbackError::EntryEvicted));
     }
 
     #[test]
-    fn read_entry_on_anchor() {
+    fn get_on_anchor() {
         let mut buf = SBoxed::new_boxed(4096, 2).unwrap();
         buf.snapshot(&make(0)).unwrap();
         buf.snapshot(&make(1)).unwrap();
         buf.snapshot(&make(2)).unwrap();
         // Entry 2 is an anchor (2 % 2 == 0)
 
-        assert_eq!(buf.read_entry(2).unwrap(), make(2));
+        assert_eq!(buf.get(2).unwrap(), make(2));
     }
 
     #[test]
-    fn read_entry_preserves_rollback_divergence() {
+    fn get_preserves_rollback_divergence() {
         let mut buf = SBoxed::new_boxed(4096, 10).unwrap();
         buf.snapshot(&make(0)).unwrap();
         buf.snapshot(&make(1)).unwrap();
 
         // Rollback sets diverged = true
-        buf.rollback_to(0).unwrap();
+        buf.rollback(0).unwrap();
         assert!(buf.diverged);
 
-        // read_entry should not clear or change diverged
-        buf.read_entry(0).unwrap();
+        // get should not clear or change diverged
+        buf.get(0).unwrap();
         assert!(buf.diverged);
     }
 }

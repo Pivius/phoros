@@ -6,10 +6,10 @@ use common::*;
 
 /// Reconstruct every entry still resident in the live window.
 fn assert_live_window_reconstructs(b: &mut DocBuf, entries: &[DocState]) {
-    let oldest = b.oldest_entry().expect("buffer should have live entries");
-    let newest = b.newest_entry().unwrap();
+    let oldest = b.start().expect("buffer should have live entries");
+    let newest = b.end().unwrap();
     for f in oldest..=newest {
-        assert_eq!(b.rollback_to(f).unwrap(), entries[f as usize], "entry {f}");
+        assert_eq!(b.rollback(f).unwrap(), entries[f as usize], "entry {f}");
     }
 }
 
@@ -34,8 +34,8 @@ fn straddling_full_snapshot_anchor_reads_back() {
     for s in &entries {
         b.snapshot(s).unwrap();
     }
-    assert_eq!(b.rollback_to(5).unwrap(), entries[5]);
-    assert_eq!(b.rollback_to(4).unwrap(), entries[4]);
+    assert_eq!(b.rollback(5).unwrap(), entries[5]);
+    assert_eq!(b.rollback(4).unwrap(), entries[4]);
 }
 
 #[test]

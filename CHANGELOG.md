@@ -9,13 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `BPRB::read_entry()` reconstruct an entry without mutating buffer state (`current_head_state`, `diverged`).
-- `EntryRange`, `Iterator<Item = Result<T, RollbackError>>` over stored entries.
+- `BPRB::get()` reconstruct an entry without mutating buffer state.
+- `BPRB::iter()` iterator over live entries, yielding `Result<T, RollbackError>`.
+- `EntryRange` iterator type.
 
 ### Changed
 
-- Refactor `buffer.rs` into multiple files.
-- Rename "frames" to "entries" as it's more descriptive to what it is.
+- Refactor `buffer.rs` into `buffer/` module.
+- Rename "frames" to "entries" throughout the codebase.
+- Rename methods to follow be similar to already existing conventions in Rust:
+  - `current_entry()` -> `count()`
+  - `oldest_entry()` -> `start()`
+  - `newest_entry()` -> `end()`
+  - `read_entry()` -> `get()`
+  - `entries_all()` -> `iter()`
+  - `rollback_to()` -> `rollback()`
+  - `AnchorIndex::find_nearest_le()` -> `nearest_le()`
+- Remove `entries(range)`, can be done with `iter().skip().take()` instead.
+
+### Fixed
+
+- `end()` now checks `live_slot_count` — returns `None` when nothing is live (was returning `Some(count-1)` after full eviction).
+- `is_empty()` now checks `len() == 0` (consistent with Rust std semantics).
+- `iter()` on an empty buffer yields nothing instead of entry 0.
 
 ## [0.1.2]
 

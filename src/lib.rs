@@ -10,7 +10,7 @@
 //!
 //! let mut buf = bprb!(u64 => stack(1024)).unwrap();
 //! buf.snapshot(&42u64).unwrap();
-//! assert_eq!(buf.rollback_to(0).unwrap(), 42u64);
+//! assert_eq!(buf.rollback(0).unwrap(), 42u64);
 //! ```
 //!
 //! # Feature flags

@@ -9,7 +9,7 @@ fn single_snapshot_roundtrip() {
     let mut b = buf(60, 64 * 1024);
     let s = make_state(0);
     b.snapshot(&s).unwrap();
-    assert_eq!(b.rollback_to(0).unwrap(), s);
+    assert_eq!(b.rollback(0).unwrap(), s);
 }
 
 #[test]
@@ -20,7 +20,7 @@ fn many_snapshots_roundtrip_all() {
         b.snapshot(s).unwrap();
     }
     for (i, expected) in entries.iter().enumerate() {
-        assert_eq!(b.rollback_to(i as u64).unwrap(), *expected, "entry {i}");
+        assert_eq!(b.rollback(i as u64).unwrap(), *expected, "entry {i}");
     }
 }
 
@@ -33,7 +33,7 @@ fn rollback_across_anchor_boundary() {
     }
     for target in [9, 10, 11, 19, 20, 21, 34] {
         assert_eq!(
-            b.rollback_to(target).unwrap(),
+            b.rollback(target).unwrap(),
             entries[target as usize],
             "target {target}"
         );
@@ -50,11 +50,11 @@ fn interleaved_rollback_then_snapshot_keeps_chain_valid() {
     b.snapshot(&a).unwrap();
     b.snapshot(&base).unwrap();
 
-    assert_eq!(b.rollback_to(1).unwrap(), a); // rewind
+    assert_eq!(b.rollback(1).unwrap(), a); // rewind
 
     b.snapshot(&next).unwrap(); // recorded against current head (entry 1's state)
-    assert_eq!(b.rollback_to(1).unwrap(), a);
-    assert_eq!(b.rollback_to(3).unwrap(), next);
+    assert_eq!(b.rollback(1).unwrap(), a);
+    assert_eq!(b.rollback(3).unwrap(), next);
 }
 
 #[test]
@@ -65,7 +65,7 @@ fn full_snapshot_midchain_is_replaced_not_xored() {
         b.snapshot(s).unwrap();
     }
     for (i, expected) in entries.iter().enumerate() {
-        assert_eq!(b.rollback_to(i as u64).unwrap(), *expected, "entry {i}");
+        assert_eq!(b.rollback(i as u64).unwrap(), *expected, "entry {i}");
     }
 }
 
