@@ -174,38 +174,12 @@ where
         let mut buf_delta = [0u8; STATE_SIZE];
         let mut buf_encoded = [0u8; MAX_ENCODED];
 
-        let mut kind;
-        let mut payload_len;
-
-        if self.should_store_snapshot(state_bytes, entry) {
-            kind = SlotType::FullSnapshot;
-            payload_len = STATE_SIZE;
-        } else {
-            let current = Self::state_as_bytes(
-                self.current_head_state
-                    .as_ref()
-                    .expect("current_head_state must be set after first snapshot"),
-            );
-            for (d, (s, c)) in buf_delta
-                .iter_mut()
-                .zip(state_bytes.iter().zip(current.iter()))
-            {
-                *d = *s ^ *c;
-            }
-
-            let encoded_len = codec::byte_masked_encode(&buf_delta, &mut buf_encoded)?;
-
-            if encoded_len > ((STATE_SIZE as f64 * self.delta_threshold) as usize) {
-                kind = SlotType::FullSnapshot;
-                payload_len = STATE_SIZE;
-            } else {
-                kind = SlotType::Delta;
-                payload_len = encoded_len;
-            }
-        };
+        let (mut kind, mut payload_len) =
+            self.compute_slot(state_bytes, entry, &mut buf_delta, &mut buf_encoded)?;
 
         self.ensure_space((SLOT_HEADER_SIZE + payload_len) as u32);
 
+        // ensure_space might evict all anchors; force full snapshot if so
         if kind == SlotType::Delta && self.anchor_index.is_empty() {
             kind = SlotType::FullSnapshot;
             payload_len = STATE_SIZE;
@@ -218,7 +192,57 @@ where
             state_bytes
         };
 
-        let checksum = compute_checksum(entry, kind as u8, payload_ref);
+        self.write_slot(kind, entry, payload_ref);
+
+        self.current_head_state = Some(*state);
+        self.entry_counter += 1;
+
+        Ok(())
+    }
+
+    /// Decide slot kind and payload length for a new entry.
+    ///
+    /// Returns `(kind, payload_len)`. If Delta, the encoded payload is in
+    /// `buf_encoded[..payload_len]`.
+    fn compute_slot(
+        &self,
+        state_bytes: &[u8],
+        entry: u64,
+        buf_delta: &mut [u8],
+        buf_encoded: &mut [u8],
+    ) -> Result<(SlotType, usize), BufferError> {
+        if self.should_store_snapshot(state_bytes, entry) {
+            return Ok((SlotType::FullSnapshot, STATE_SIZE));
+        }
+
+        let current = Self::state_as_bytes(
+            self.current_head_state
+                .as_ref()
+                .expect("current_head_state must be set after first snapshot"),
+        );
+        for (d, (s, c)) in buf_delta
+            .iter_mut()
+            .zip(state_bytes.iter().zip(current.iter()))
+        {
+            *d = *s ^ *c;
+        }
+
+        let encoded_len = codec::byte_masked_encode(buf_delta, buf_encoded)?;
+
+        if encoded_len > ((STATE_SIZE as f64 * self.delta_threshold) as usize) {
+            Ok((SlotType::FullSnapshot, STATE_SIZE))
+        } else {
+            Ok((SlotType::Delta, encoded_len))
+        }
+    }
+
+    /// Write a slot to the arena and update metadata.
+    ///
+    /// Caller must have ensured space via [`ensure_space`](Self::ensure_space).
+    fn write_slot(&mut self, kind: SlotType, entry: u64, payload: &[u8]) {
+        let payload_len = payload.len();
+
+        let checksum = compute_checksum(entry, kind as u8, payload);
         let slot_header = SlotHeader {
             entry,
             kind: kind as u8,
@@ -233,7 +257,7 @@ where
         arena_write_to(
             self.storage.as_mut_slice(),
             start_off + SLOT_HEADER_SIZE as u32,
-            payload_ref,
+            payload,
         );
 
         let slot_size = SLOT_HEADER_SIZE as u32 + payload_len as u32;
@@ -246,11 +270,6 @@ where
             self.anchor_index.insert(entry, start_off);
             self.diverged = false;
         }
-
-        self.current_head_state = Some(*state);
-        self.entry_counter += 1;
-
-        Ok(())
     }
 
     /// Read the state at `target_entry`.
@@ -274,14 +293,37 @@ where
             .nearest_le(target_entry)
             .ok_or(RollbackError::EntryEvicted)?;
 
+        let mut working = [0u8; STATE_SIZE];
         let mut buf_encoded = [0u8; MAX_ENCODED];
+        let mut buf_delta = [0u8; STATE_SIZE];
 
-        let anchor_header = self.read_slot_at(anchor.offset(), &mut buf_encoded)?;
+        self.reconstruct_from(
+            anchor,
+            target_entry,
+            &mut working,
+            &mut buf_encoded,
+            &mut buf_delta,
+        )?;
+
+        Ok(Self::bytes_to_state(&working))
+    }
+
+    /// Reconstruct state at `target` by loading `anchor`'s snapshot into
+    /// `working`, and walking the chain forward. Shared by [`get`](Self::get)
+    /// and [`EntryRange`](crate::EntryRange).
+    pub(crate) fn reconstruct_from(
+        &self,
+        anchor: crate::index::AnchorEntry,
+        target: u64,
+        working: &mut [u8],
+        buf_encoded: &mut [u8],
+        buf_delta: &mut [u8],
+    ) -> Result<(), RollbackError> {
+        let anchor_header = self.read_slot_at(anchor.offset(), buf_encoded)?;
         if anchor_header.payload_len as usize != STATE_SIZE {
             return Err(RollbackError::CorruptedChain);
         }
 
-        let mut working = [0u8; STATE_SIZE];
         working[..anchor_header.payload_len as usize]
             .copy_from_slice(&buf_encoded[..anchor_header.payload_len as usize]);
 
@@ -291,10 +333,8 @@ where
             self.header.data_area_len,
         );
 
-        let mut buf_delta = [0u8; STATE_SIZE];
-
-        for expected_entry in (anchor.entry() + 1)..=target_entry {
-            let header = self.read_slot_at(offset, &mut buf_encoded)?;
+        for expected_entry in (anchor.entry() + 1)..=target {
+            let header = self.read_slot_at(offset, buf_encoded)?;
 
             if header.entry != expected_entry {
                 return Err(RollbackError::CorruptedChain);
@@ -315,9 +355,9 @@ where
                     buf_delta.fill(0);
                     codec::byte_masked_decode(
                         &buf_encoded[..header.payload_len as usize],
-                        &mut buf_delta,
+                        buf_delta,
                     )?;
-                    xor_into(&mut working, &buf_delta);
+                    xor_into(working, buf_delta);
                 }
                 None => return Err(RollbackError::CorruptedChain),
             }
@@ -325,7 +365,7 @@ where
             offset = next_slot_offset(offset, header.payload_len, self.header.data_area_len);
         }
 
-        Ok(Self::bytes_to_state(&working))
+        Ok(())
     }
 
     /// Reconstruct the state at `target_entry` by [`get`](Self::get).
@@ -555,7 +595,7 @@ mod tests {
     }
 
     const S_STATE_SIZE: usize = core::mem::size_of::<S>();
-    const S_MAX_ENCODED: usize = 10 * (S_STATE_SIZE + 7).div_ceil(8) + 1;
+    const S_MAX_ENCODED: usize = crate::buffer::max_encoded(S_STATE_SIZE);
 
     type SBoxed = BPRB<S, alloc::boxed::Box<[u8]>, S_STATE_SIZE, S_MAX_ENCODED>;
 
@@ -573,10 +613,7 @@ mod tests {
 
         buf.storage_mut()[SLOT_HEADER_SIZE + 1] ^= 0xFF;
 
-        assert_eq!(
-            buf.rollback(0).err(),
-            Some(RollbackError::CorruptedChain)
-        );
+        assert_eq!(buf.rollback(0).err(), Some(RollbackError::CorruptedChain));
     }
 
     #[test]

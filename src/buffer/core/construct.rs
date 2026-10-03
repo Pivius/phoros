@@ -72,7 +72,7 @@ pub type StackBPRB<T, const STATE_SIZE: usize, const MAX_ENCODED: usize, const A
 macro_rules! bprb {
     ($t:ty => boxed($arena_bytes:expr)) => {{
         const __PHOROS_STATE_SIZE: usize = core::mem::size_of::<$t>();
-        const __PHOROS_MAX_ENCODED: usize = 10 * ((__PHOROS_STATE_SIZE + 7) / 8) + 1;
+        const __PHOROS_MAX_ENCODED: usize = $crate::buffer::max_encoded(__PHOROS_STATE_SIZE);
         $crate::BoxedBPRB::<$t, __PHOROS_STATE_SIZE, __PHOROS_MAX_ENCODED>::new_boxed(
             $arena_bytes,
             $crate::DEFAULT_ANCHOR_INTERVAL,
@@ -80,7 +80,7 @@ macro_rules! bprb {
     }};
     ($t:ty => boxed($arena_bytes:expr, $anchor_interval:expr)) => {{
         const __PHOROS_STATE_SIZE: usize = core::mem::size_of::<$t>();
-        const __PHOROS_MAX_ENCODED: usize = 10 * ((__PHOROS_STATE_SIZE + 7) / 8) + 1;
+        const __PHOROS_MAX_ENCODED: usize = $crate::buffer::max_encoded(__PHOROS_STATE_SIZE);
         $crate::BoxedBPRB::<$t, __PHOROS_STATE_SIZE, __PHOROS_MAX_ENCODED>::new_boxed(
             $arena_bytes,
             $anchor_interval,
@@ -88,14 +88,14 @@ macro_rules! bprb {
     }};
     ($t:ty => stack($arena_size:expr)) => {{
         const __PHOROS_STATE_SIZE: usize = core::mem::size_of::<$t>();
-        const __PHOROS_MAX_ENCODED: usize = 10 * ((__PHOROS_STATE_SIZE + 7) / 8) + 1;
+        const __PHOROS_MAX_ENCODED: usize = $crate::buffer::max_encoded(__PHOROS_STATE_SIZE);
         $crate::StackBPRB::<$t, __PHOROS_STATE_SIZE, __PHOROS_MAX_ENCODED, $arena_size>::new_stack(
             $crate::DEFAULT_ANCHOR_INTERVAL,
         )
     }};
     ($t:ty => stack($arena_size:expr, $anchor_interval:expr)) => {{
         const __PHOROS_STATE_SIZE: usize = core::mem::size_of::<$t>();
-        const __PHOROS_MAX_ENCODED: usize = 10 * ((__PHOROS_STATE_SIZE + 7) / 8) + 1;
+        const __PHOROS_MAX_ENCODED: usize = $crate::buffer::max_encoded(__PHOROS_STATE_SIZE);
         $crate::StackBPRB::<$t, __PHOROS_STATE_SIZE, __PHOROS_MAX_ENCODED, $arena_size>::new_stack(
             $anchor_interval,
         )

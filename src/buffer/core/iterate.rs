@@ -1,15 +1,13 @@
-use crate::codec;
 use crate::error::RollbackError;
-use crate::slot::{SlotType, next_slot_offset};
 use crate::storage::ArenaStorage;
 
-use super::{BPRB, xor_into};
+use super::BPRB;
 
 /// Iterator over stored entry in a [`BPRB`].
 ///
 /// Yields `Result<T, RollbackError>` for each entry in the range.
 ///
-/// Created via [`BPRB::entries`] or [`BPRB::iter`].
+/// Created via [`BPRB::iter`].
 pub struct EntryRange<'a, T, S, const STATE_SIZE: usize, const MAX_ENCODED: usize>
 where
     T: Copy + Sized + Send + 'static,
@@ -18,7 +16,6 @@ where
     buf: &'a BPRB<T, S, STATE_SIZE, MAX_ENCODED>,
     next_entry: u64,
     end_entry: u64,
-    arena_offset: u32,
     working: [u8; STATE_SIZE],
     buf_encoded: [u8; MAX_ENCODED],
     buf_delta: [u8; STATE_SIZE],
@@ -35,7 +32,6 @@ where
             buf,
             next_entry: start,
             end_entry: end,
-            arena_offset: 0,
             working: [0u8; STATE_SIZE],
             buf_encoded: [0u8; MAX_ENCODED],
             buf_delta: [0u8; STATE_SIZE],
@@ -60,87 +56,27 @@ where
         let target = self.next_entry;
 
         let anchor = buf.anchor_index.nearest_le(target)?;
-
         if anchor.entry() > target {
             return Some(Err(RollbackError::EntryEvicted));
         }
 
-        let anchor_header = match buf.read_slot_at(anchor.offset(), &mut self.buf_encoded) {
-            Ok(h) => h,
+        match buf.reconstruct_from(
+            anchor,
+            target,
+            &mut self.working,
+            &mut self.buf_encoded,
+            &mut self.buf_delta,
+        ) {
+            Ok(()) => {
+                let result = BPRB::<T, S, STATE_SIZE, MAX_ENCODED>::bytes_to_state(&self.working);
+                self.next_entry += 1;
+                Some(Ok(result))
+            }
             Err(e) => {
-                self.next_entry = u64::MAX; // stop iter
-                return Some(Err(e));
-            }
-        };
-        if anchor_header.payload_len as usize != STATE_SIZE {
-            self.next_entry = u64::MAX;
-            return Some(Err(RollbackError::CorruptedChain));
-        }
-
-        self.working[..anchor_header.payload_len as usize]
-            .copy_from_slice(&self.buf_encoded[..anchor_header.payload_len as usize]);
-
-        self.arena_offset = next_slot_offset(
-            anchor.offset(),
-            anchor_header.payload_len,
-            buf.header.data_area_len,
-        );
-
-        for expected_entry in (anchor.entry() + 1)..=target {
-            let header = match buf.read_slot_at(self.arena_offset, &mut self.buf_encoded) {
-                Ok(h) => h,
-                Err(e) => {
-                    self.next_entry = u64::MAX;
-                    return Some(Err(e));
-                }
-            };
-
-            if header.entry != expected_entry {
                 self.next_entry = u64::MAX;
-                return Some(Err(RollbackError::CorruptedChain));
+                Some(Err(e))
             }
-
-            match SlotType::from_u8(header.kind) {
-                Some(SlotType::FullSnapshot) => {
-                    if header.payload_len as usize != STATE_SIZE {
-                        self.next_entry = u64::MAX;
-                        return Some(Err(RollbackError::CorruptedChain));
-                    }
-                    self.working[..header.payload_len as usize]
-                        .copy_from_slice(&self.buf_encoded[..header.payload_len as usize]);
-                }
-                Some(SlotType::Delta) => {
-                    if header.payload_len as usize > MAX_ENCODED {
-                        self.next_entry = u64::MAX;
-                        return Some(Err(RollbackError::CorruptedChain));
-                    }
-                    self.buf_delta.fill(0);
-                    if let Err(e) = codec::byte_masked_decode(
-                        &self.buf_encoded[..header.payload_len as usize],
-                        &mut self.buf_delta,
-                    ) {
-                        self.next_entry = u64::MAX;
-                        return Some(Err(e.into()));
-                    }
-                    xor_into(&mut self.working, &self.buf_delta);
-                }
-                None => {
-                    self.next_entry = u64::MAX;
-                    return Some(Err(RollbackError::CorruptedChain));
-                }
-            }
-
-            self.arena_offset = next_slot_offset(
-                self.arena_offset,
-                header.payload_len,
-                buf.header.data_area_len,
-            );
         }
-
-        let result = BPRB::<T, S, STATE_SIZE, MAX_ENCODED>::bytes_to_state(&self.working);
-
-        self.next_entry += 1;
-        Some(Ok(result))
     }
 }
 
@@ -173,7 +109,7 @@ mod tests {
     }
 
     const S_STATE_SIZE: usize = core::mem::size_of::<S>();
-    const S_MAX_ENCODED: usize = 10 * (S_STATE_SIZE + 7).div_ceil(8) + 1;
+    const S_MAX_ENCODED: usize = crate::buffer::max_encoded(S_STATE_SIZE);
 
     type SBoxed = BPRB<S, alloc::boxed::Box<[u8]>, S_STATE_SIZE, S_MAX_ENCODED>;
 

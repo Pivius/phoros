@@ -88,24 +88,6 @@ impl AnchorIndex {
         true
     }
 
-    /// Remove the entry written at `offset`. Returns `true` if found.
-    pub fn remove_by_offset(&mut self, offset: u32) -> bool {
-        let pos = self.entries[..self.count]
-            .iter()
-            .position(|e| e.is_some_and(|e| e.offset == offset));
-
-        if let Some(pos) = pos {
-            for i in pos..self.count - 1 {
-                self.entries[i] = self.entries[i + 1];
-            }
-            self.entries[self.count - 1] = None;
-            self.count -= 1;
-            true
-        } else {
-            false
-        }
-    }
-
     /// Binary search for the nearest anchor with `entry <= target_entry`.
     #[inline]
     pub fn nearest_le(&self, target_entry: u64) -> Option<AnchorEntry> {
@@ -194,18 +176,6 @@ mod tests {
         let mut index = AnchorIndex::new();
         index.insert(60, 0);
         assert!(index.nearest_le(30).is_none());
-    }
-
-    #[test]
-    fn remove_by_offset() {
-        let mut index = AnchorIndex::new();
-        index.insert(0, 0);
-        index.insert(60, 1000);
-
-        assert!(index.remove_by_offset(0));
-        assert_eq!(index.len(), 1);
-        assert!(index.nearest_le(0).is_none());
-        assert_eq!(index.nearest_le(60).unwrap().entry, 60);
     }
 
     #[test]

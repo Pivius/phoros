@@ -44,7 +44,7 @@ impl SlotType {
 /// ```text
 /// Offset  Size  Field
 /// ──────  ────  ─────────────
-///   0       8   frame
+///   0       8   entry
 ///   8       2   payload_len
 ///  10       2   checksum
 ///  12       1   kind

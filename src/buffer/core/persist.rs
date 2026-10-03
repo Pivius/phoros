@@ -46,6 +46,28 @@ where
             head_state,
         }
     }
+
+    /// Restore buffer state from `saved` into a new `BPRB` backed by `arena`.
+    #[allow(clippy::too_many_arguments)]
+    fn restore_from_saved(
+        arena: S,
+        anchor_index: crate::index::AnchorIndex,
+        head_state: Option<T>,
+        entry_counter: u64,
+        anchor_interval: u64,
+        delta_threshold: f64,
+        used_bytes: u32,
+        diverged: bool,
+    ) -> Result<Self, BufferError> {
+        let mut bprb = Self::from_storage(arena, anchor_interval)?;
+        bprb.anchor_index = anchor_index;
+        bprb.current_head_state = head_state;
+        bprb.entry_counter = entry_counter;
+        bprb.delta_threshold = delta_threshold;
+        bprb.used_bytes = used_bytes;
+        bprb.diverged = diverged;
+        Ok(bprb)
+    }
 }
 
 #[cfg(all(feature = "alloc", feature = "serde"))]
@@ -76,20 +98,33 @@ where
     /// assert_eq!(restored.rollback(0).unwrap(), 42u64);
     /// ```
     pub fn load(saved: SavedState) -> Result<Self, BufferError> {
-        let head_state = saved.head_state.map(|bytes| {
+        let SavedState {
+            arena,
+            anchor_index,
+            head_state,
+            entry_counter,
+            anchor_interval,
+            delta_threshold,
+            used_bytes,
+            diverged,
+        } = saved;
+
+        let arena = alloc::vec::Vec::into_boxed_slice(arena);
+        let head_state = head_state.map(|bytes| {
             debug_assert_eq!(bytes.len(), STATE_SIZE);
             Self::bytes_to_state(&bytes)
         });
 
-        let arena = alloc::vec::Vec::into_boxed_slice(saved.arena);
-        let mut bprb = Self::from_storage(arena, saved.anchor_interval)?;
-        bprb.anchor_index = saved.anchor_index;
-        bprb.current_head_state = head_state;
-        bprb.entry_counter = saved.entry_counter;
-        bprb.delta_threshold = saved.delta_threshold;
-        bprb.used_bytes = saved.used_bytes;
-        bprb.diverged = saved.diverged;
-        Ok(bprb)
+        Self::restore_from_saved(
+            arena,
+            anchor_index,
+            head_state,
+            entry_counter,
+            anchor_interval,
+            delta_threshold,
+            used_bytes,
+            diverged,
+        )
     }
 }
 
@@ -107,21 +142,34 @@ where
     ///
     /// Panics if `saved.arena.len() != ARENA_SIZE`.
     pub fn load(saved: SavedState) -> Result<Self, BufferError> {
-        let head_state = saved.head_state.map(|bytes| {
+        let SavedState {
+            arena,
+            anchor_index,
+            head_state,
+            entry_counter,
+            anchor_interval,
+            delta_threshold,
+            used_bytes,
+            diverged,
+        } = saved;
+
+        let mut arena_bytes = [0u8; ARENA_SIZE];
+        arena_bytes.copy_from_slice(&arena);
+        let head_state = head_state.map(|bytes| {
             debug_assert_eq!(bytes.len(), STATE_SIZE);
             Self::bytes_to_state(&bytes)
         });
 
-        let mut arena = [0u8; ARENA_SIZE];
-        arena.copy_from_slice(&saved.arena);
-        let mut bprb = Self::from_storage(arena, saved.anchor_interval)?;
-        bprb.anchor_index = saved.anchor_index;
-        bprb.current_head_state = head_state;
-        bprb.entry_counter = saved.entry_counter;
-        bprb.delta_threshold = saved.delta_threshold;
-        bprb.used_bytes = saved.used_bytes;
-        bprb.diverged = saved.diverged;
-        Ok(bprb)
+        Self::restore_from_saved(
+            arena_bytes,
+            anchor_index,
+            head_state,
+            entry_counter,
+            anchor_interval,
+            delta_threshold,
+            used_bytes,
+            diverged,
+        )
     }
 }
 
@@ -136,7 +184,7 @@ mod save_load_tests {
     }
 
     const S_STATE_SIZE: usize = core::mem::size_of::<S>();
-    const S_MAX_ENCODED: usize = 10 * (S_STATE_SIZE + 7).div_ceil(8) + 1;
+    const S_MAX_ENCODED: usize = crate::buffer::max_encoded(S_STATE_SIZE);
 
     type SBoxed = BPRB<S, alloc::boxed::Box<[u8]>, S_STATE_SIZE, S_MAX_ENCODED>;
 

@@ -1,9 +1,11 @@
 [package]
 name = "phoros"
-version = "0.1.2"
+version = "0.2.0"
 edition = "2024"
+rust-version = "1.99"
 description = "Zero-allocation ring buffer with XOR delta encoding and state rollback"
 license = "MIT"
+readme = "README.md"
 repository = "https://github.com/Pivius/phoros"
 keywords = ["ring-buffer", "undo", "rollback", "state", "no-std"]
 categories = ["no-std", "data-structures"]

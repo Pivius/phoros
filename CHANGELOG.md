@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0]
 
 ### Added
 
@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Rust version updated to `1.99`
 - Refactor `buffer.rs` into `buffer/` module.
 - Rename "frames" to "entries" throughout the codebase.
 - Rename methods to follow be similar to already existing conventions in Rust:
@@ -26,6 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `rollback_to()` -> `rollback()`
   - `AnchorIndex::find_nearest_le()` -> `nearest_le()`
 - Remove `entries(range)`, can be done with `iter().skip().take()` instead.
+- Compose larger methods into smaller helper methods:
+  - Extract `reconstruct_from()` helper, removes duplicated delta chain walk logic between `get()` and `EntryRange::next()`.
+  - Split `snapshot()` into `compute_slot()` + `write_slot()`.
+  - Split `load()` into `restore_from_saved()` helper.
+- Extract `max_encoded(state_size)` as `pub const fn`.
+- Remove dead code `AnchorIndex::remove_by_offset()`.
 
 ### Fixed
 
