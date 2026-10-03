@@ -9,37 +9,37 @@ use phoros::RollbackError;
 fn eviction_drops_oldest_and_keeps_window_valid() {
     let mut b = buf(8, 2048);
     let n = 200;
-    let frames: Vec<_> = (0..n).map(make_state).collect();
-    for s in &frames {
+    let entries: Vec<_> = (0..n).map(make_state).collect();
+    for s in &entries {
         b.snapshot(s).unwrap();
     }
 
-    assert_eq!(b.newest_frame(), Some(n as u64 - 1));
-    let oldest = b.oldest_frame().unwrap();
+    assert_eq!(b.end(), Some(n as u64 - 1));
+    let oldest = b.start().unwrap();
     assert!(oldest > 0, "expected eviction, oldest={oldest}");
     assert!(!b.is_empty() && b.len() < n);
 
     for f in oldest..=(n as u64 - 1) {
-        assert_eq!(b.rollback_to(f).unwrap(), frames[f as usize], "frame {f}");
+        assert_eq!(b.rollback(f).unwrap(), entries[f as usize], "entry {f}");
     }
 }
 
 #[test]
-fn evicted_frames_return_frame_evicted() {
+fn evicted_entries_return_entry_evicted() {
     let mut b = buf(8, 2048);
     let n = 200;
     for i in 0..n {
         b.snapshot(&make_state(i)).unwrap();
     }
-    let oldest = b.oldest_frame().unwrap();
+    let oldest = b.start().unwrap();
 
-    match b.rollback_to(oldest - 1) {
-        Err(RollbackError::FrameEvicted) => {}
-        other => panic!("expected FrameEvicted for {oldest}, got {other:?}"),
+    match b.rollback(oldest - 1) {
+        Err(RollbackError::EntryEvicted) => {}
+        other => panic!("expected EntryEvicted for {oldest}, got {other:?}"),
     }
-    match b.rollback_to(0) {
-        Err(RollbackError::FrameEvicted) => {}
-        other => panic!("expected FrameEvicted for 0, got {other:?}"),
+    match b.rollback(0) {
+        Err(RollbackError::EntryEvicted) => {}
+        other => panic!("expected EntryEvicted for 0, got {other:?}"),
     }
 }
 
@@ -52,9 +52,9 @@ fn delta_chains_never_orphan_after_repeated_eviction() {
         seen.push(make_state(i as usize));
     }
 
-    if let Some(oldest) = b.oldest_frame() {
+    if let Some(oldest) = b.start() {
         for f in oldest..=79 {
-            assert_eq!(b.rollback_to(f).unwrap(), seen[f as usize], "frame {f}");
+            assert_eq!(b.rollback(f).unwrap(), seen[f as usize], "entry {f}");
         }
     }
 }

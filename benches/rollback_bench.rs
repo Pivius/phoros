@@ -46,7 +46,7 @@ fn bench_rollback(c: &mut Criterion) {
                     for i in 0..depth + 10 {
                         buf.snapshot(&make_doc_state(i)).unwrap();
                     }
-                    buf.rollback_to(0).unwrap();
+                    buf.rollback(0).unwrap();
                 });
             },
         );

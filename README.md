@@ -11,14 +11,14 @@ Add `phoros` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-phoros = "0.1"
+phoros = "0.2"
 ```
 
 For `#![no_std]` environments, disable default features:
 
 ```toml
 [dependencies]
-phoros = { version = "0.1", default-features = false }
+phoros = { version = "0.2", default-features = false }
 ```
 
 ## Quickstart
@@ -45,7 +45,7 @@ fn main() -> Result<(), BufferError> {
         history.snapshot(&state)?;
     }
 
-    let restored = history.rollback_to(42)?;
+    let restored = history.rollback(42)?;
     assert_eq!(restored.coords.0, 43);
 
     Ok(())

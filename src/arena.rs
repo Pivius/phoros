@@ -13,7 +13,7 @@ pub struct ArenaHeader {
     pub head_offset: u32,
     pub tail_offset: u32,
     pub live_slot_count: u32,
-    pub total_frames: u64,
+    pub total_entries: u64,
 }
 
 impl ArenaHeader {
@@ -26,7 +26,7 @@ impl ArenaHeader {
             head_offset: 0,
             tail_offset: 0,
             live_slot_count: 0,
-            total_frames: 0,
+            total_entries: 0,
         }
     }
 
@@ -70,7 +70,7 @@ impl ArenaHeader {
             head_offset: u32::from_le_bytes(b[12..16].try_into().unwrap()),
             tail_offset: u32::from_le_bytes(b[16..20].try_into().unwrap()),
             live_slot_count: u32::from_le_bytes(b[20..24].try_into().unwrap()),
-            total_frames: u64::from_le_bytes(b[24..32].try_into().unwrap()),
+            total_entries: u64::from_le_bytes(b[24..32].try_into().unwrap()),
         };
         if !header.is_valid() {
             return None;

@@ -10,7 +10,7 @@
 //!
 //! let mut buf = bprb!(u64 => stack(1024)).unwrap();
 //! buf.snapshot(&42u64).unwrap();
-//! assert_eq!(buf.rollback_to(0).unwrap(), 42u64);
+//! assert_eq!(buf.rollback(0).unwrap(), 42u64);
 //! ```
 //!
 //! # Feature flags
@@ -39,6 +39,7 @@ pub mod storage;
 pub use buffer::BPRB;
 #[cfg(feature = "alloc")]
 pub use buffer::BoxedBPRB;
+pub use buffer::EntryRange;
 #[cfg(all(feature = "alloc", feature = "serde"))]
 pub use buffer::SavedState;
 pub use buffer::StackBPRB;

@@ -10,10 +10,10 @@ fn empty_buffer_rejects_rollback() {
     let mut b = buf(60, 4096);
     assert!(b.is_empty());
     assert_eq!(b.len(), 0);
-    assert_eq!(b.current_frame(), 0);
-    assert_eq!(b.oldest_frame(), None);
-    assert_eq!(b.newest_frame(), None);
-    assert_eq!(b.rollback_to(0).err(), Some(RollbackError::FrameEvicted));
+    assert_eq!(b.count(), 0);
+    assert_eq!(b.start(), None);
+    assert_eq!(b.end(), None);
+    assert_eq!(b.rollback(0).err(), Some(RollbackError::EntryEvicted));
 }
 
 #[test]
@@ -27,26 +27,26 @@ fn rejects_arena_smaller_than_one_slot() {
 }
 
 #[test]
-fn out_of_range_frame_is_not_available() {
+fn out_of_range_entry_is_not_available() {
     let mut b = buf(60, 64 * 1024);
     b.snapshot(&make_state(0)).unwrap();
     b.snapshot(&make_state(1)).unwrap();
-    // frame 5 was never written.
-    assert_eq!(b.rollback_to(5).err(), Some(RollbackError::FrameEvicted));
+    // entry 5 was never written.
+    assert_eq!(b.rollback(5).err(), Some(RollbackError::EntryEvicted));
 }
 
 #[test]
-fn single_frame_window_bookkeeping() {
+fn single_entry_window_bookkeeping() {
     let mut b = buf(60, 64 * 1024);
     let s = make_state(0);
     b.snapshot(&s).unwrap();
 
     assert!(!b.is_empty());
     assert_eq!(b.len(), 1);
-    assert_eq!(b.current_frame(), 1);
-    assert_eq!(b.oldest_frame(), Some(0));
-    assert_eq!(b.newest_frame(), Some(0));
-    assert_eq!(b.rollback_to(0).unwrap(), s);
+    assert_eq!(b.count(), 1);
+    assert_eq!(b.start(), Some(0));
+    assert_eq!(b.end(), Some(0));
+    assert_eq!(b.rollback(0).unwrap(), s);
 }
 
 #[test]
@@ -57,21 +57,21 @@ fn identical_states_still_roundtrip() {
         b.snapshot(&s).unwrap();
     }
     for f in [0u64, 50, 99] {
-        assert_eq!(b.rollback_to(f).unwrap(), s, "frame {f}");
+        assert_eq!(b.rollback(f).unwrap(), s, "entry {f}");
     }
-    assert_eq!(b.newest_frame(), Some(99));
-    assert_eq!(b.oldest_frame(), Some(0));
+    assert_eq!(b.end(), Some(99));
+    assert_eq!(b.start(), Some(0));
 }
 
 #[test]
-fn window_advances_with_frames() {
+fn window_advances_with_entries() {
     let mut b = buf(60, 64 * 1024);
     for i in 0..10 {
         b.snapshot(&make_state(i)).unwrap();
     }
-    assert_eq!(b.current_frame(), 10);
-    assert_eq!(b.newest_frame(), Some(9));
-    assert_eq!(b.oldest_frame(), Some(0));
+    assert_eq!(b.count(), 10);
+    assert_eq!(b.end(), Some(9));
+    assert_eq!(b.start(), Some(0));
 }
 
 #[test]
